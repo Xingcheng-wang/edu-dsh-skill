@@ -86,7 +86,7 @@ def slugify(text: str, maxlen: int = 48) -> str:
 
 
 def home_of(args) -> Path:
-    raw = args.home or os.environ.get("EDU_HOME") or str(Path.home() / ".edu")
+    raw = args.home or os.environ.get("EDU_HOME") or str(Path.home() / ".edu-dsh")
     return Path(raw).expanduser().resolve()
 
 
@@ -742,7 +742,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add_home(sp):
         sp.add_argument("--home", default=None,
-                        help="workspace (default: $EDU_HOME or ~/.edu)")
+                        help="workspace (default: $EDU_HOME or ~/.edu-dsh)")
 
     def add_consent(sp, required=False):
         sp.add_argument("--consent", default=None, choices=CONSENT_LEVELS,

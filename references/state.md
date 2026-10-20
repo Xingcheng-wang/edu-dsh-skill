@@ -2,7 +2,7 @@
 
 ## 工作区
 
-`<EDU_HOME>` 默认 `~/.edu`，可用 `EDU_HOME` 覆盖。
+`<EDU_HOME>` 默认 `~/.edu-dsh`，可用 `EDU_HOME` 覆盖。
 
 ```
 <EDU_HOME>/

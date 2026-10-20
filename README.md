@@ -63,7 +63,7 @@ python ~/.claude/skills/edu-dsh/scripts/edu_dsh.py doctor
 
 ## 五、工作区
 
-默认 `~/.edu`，可用 `EDU_HOME` 覆盖。
+默认 `~/.edu-dsh`，可用 `EDU_HOME` 覆盖。
 
 ```
 <EDU_HOME>/
