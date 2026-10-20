@@ -46,13 +46,28 @@
 
 ## 四、快速开始
 
+**Claude Code**
+
 ```bash
 git clone https://github.com/Xingcheng-wang/edu-dsh-skill.git ~/.claude/skills/edu-dsh
-python ~/.claude/skills/edu-dsh/scripts/edu_dsh.py init
-python ~/.claude/skills/edu-dsh/scripts/edu_dsh.py doctor
 ```
 
-然后对 Agent 说“用教育模式……”，或使用 `/edu-dsh`。
+**DeepSeek Harness**（扫描 `<DSH_HOME>/skills`，默认 `~/.dsh/skills`）
+
+```powershell
+git clone https://github.com/Xingcheng-wang/edu-dsh-skill.git "$env:USERPROFILE\.dsh\skills\edu-dsh"
+# 如果仓库在别处，用目录联接挂进去（Windows 不需要管理员权限）：
+# New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\skills\edu-dsh" -Target D:\path\to\repo
+```
+
+然后初始化：
+
+```bash
+python <skill-dir>/scripts/edu_dsh.py init
+python <skill-dir>/scripts/edu_dsh.py doctor
+```
+
+之后对 Agent 说“用教育模式……”，或使用 `/edu-dsh`。
 
 第一次对话，模型会先问一句记录偏好（不记 / 只记概要 / 记原话），默认只记概要。
 
