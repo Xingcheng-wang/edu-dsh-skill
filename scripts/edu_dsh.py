@@ -20,7 +20,7 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 MIN_PYTHON = (3, 10)
 
 CONSENT_LEVELS = ("off", "outline", "verbatim")
@@ -184,10 +184,34 @@ def ensure_home(home: Path, lang: str = "auto") -> Path:
     return home
 
 
+def _normalize_entries(items, kind: str) -> list:
+    """Accept both the CLI shape and hand-written shorthand (plain strings)."""
+    out = []
+    for index, item in enumerate(items or [], 1):
+        if isinstance(item, str):
+            entry = {"text": item, "added": ""}
+        elif isinstance(item, dict):
+            entry = dict(item)
+            entry.setdefault("text", entry.get("statement", ""))
+        else:
+            continue
+        if kind == "capabilities":
+            entry.setdefault("id", "c%d" % index)
+            entry.setdefault("statement", entry.get("text", ""))
+            entry.setdefault("basis", "")
+            entry.setdefault("confidence", "medium")
+            entry.setdefault("updated", "")
+        out.append(entry)
+    return out
+
+
 def load_state(home: Path) -> dict:
     state = load_json(home / "learner" / "state.json", DEFAULT_STATE)
     for key, value in DEFAULT_STATE.items():
         state.setdefault(key, value)
+    state["goals"] = _normalize_entries(state.get("goals"), "goals")
+    state["questions"] = _normalize_entries(state.get("questions"), "questions")
+    state["capabilities"] = _normalize_entries(state.get("capabilities"), "capabilities")
     return state
 
 
@@ -208,6 +232,17 @@ def require_consent(args, action: str = "write") -> bool:
     return True
 
 
+def _session_label(value):
+    """Hand-written deltas may use an int or 'session 1' instead of '0001'."""
+    if isinstance(value, int):
+        return "%04d" % value
+    if isinstance(value, str):
+        match = re.match(r"\s*(\d+)", value)
+        if match:
+            return "%04d" % int(match.group(1))
+    return value
+
+
 def _read_deltas(home: Path, limit: int | None = None) -> list:
     path = home / "deltas.jsonl"
     if not path.exists():
@@ -218,9 +253,14 @@ def _read_deltas(home: Path, limit: int | None = None) -> list:
         if not line:
             continue
         try:
-            rows.append(json.loads(line))
+            row = json.loads(line)
         except ValueError:
             continue
+        if not isinstance(row, dict):
+            continue
+        row.setdefault("date", row.get("ts") or "")
+        row["session"] = _session_label(row.get("session"))
+        rows.append(row)
     return rows[-limit:] if limit else rows
 
 
@@ -340,7 +380,7 @@ def _session_meta(path: Path) -> dict:
         "topic": "",
         "mode": "",
         "consent": "legacy",
-        "quotes": "## 原话" in text,
+        "quotes": ("## 原话" in text) or ("## 用户原话" in text),
     }
     for line in text.splitlines():
         if line.startswith("- topic:"):

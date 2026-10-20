@@ -179,6 +179,32 @@ def main() -> int:
         state = json.loads((home / "learner" / "state.json").read_text(encoding="utf-8"))
         check("forget all reset state", not state["goals"] and state["session_counter"] == 0)
 
+        # hand-written / legacy state must not crash (plain strings, int session ids)
+        manual = root / "manual"
+        (manual / "learner").mkdir(parents=True)
+        (manual / "sessions").mkdir()
+        (manual / "learner" / "state.json").write_text(json.dumps({
+            "version": 1,
+            "session_counter": 1,
+            "current_topic": "memory",
+            "next_step": "画一张表",
+            "goals": ["判断可行性"],
+            "capabilities": ["能说清瓶颈在写入端"],
+            "questions": ["名词还是动词"],
+        }, ensure_ascii=False), encoding="utf-8")
+        (manual / "deltas.jsonl").write_text(
+            json.dumps({"ts": "2026-10-21", "session": 1, "learned": "x",
+                        "did": "y", "want": "z"}) + "\n", encoding="utf-8")
+        (manual / "sessions" / "0001-2026-10-21-memory.md").write_text(
+            "# 0001 — 2026-10-21\n\n- mode: spark\n- consent: verbatim\n\n"
+            "## 用户原话\n\n> 原话\n", encoding="utf-8")
+        code, out, err = run(manual, "state")
+        check("hand-written state does not crash", code == 0, err)
+        check("hand-written goal shown", "判断可行性" in out, out)
+        check("hand-written capability shown", "瓶颈在写入端" in out, out)
+        code, out, _ = run(manual, "records")
+        check("verbatim quotes detected", "yes" in out, out)
+
         print("\n%d passed, %d failed" % (passed, failed))
         return 1 if failed else 0
     finally:
