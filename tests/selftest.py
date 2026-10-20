@@ -126,11 +126,17 @@ def main() -> int:
 
         code, out, _ = run(
             home, "delta", "--learned", "能区分极限与函数值", "--did", "自己改了一个数列例子",
-            "--want", "问了无穷小的定义", "--consent", "outline",
+            "--want", "问了无穷小的定义", "--alone", "不看对话，自己把测试跑通了",
+            "--verified", "pytest", "--consent", "outline",
         )
         check("delta recorded", code == 0 and "delta recorded" in out, out)
         rows = (home / "deltas.jsonl").read_text(encoding="utf-8").strip().splitlines()
-        check("delta jsonl", len(rows) == 1 and json.loads(rows[0])["session"] == "0002", rows)
+        record = json.loads(rows[0])
+        check("delta jsonl", len(rows) == 1 and record["session"] == "0002", rows)
+        check("delta alone field", record.get("alone", "").startswith("不看对话"), record)
+        check("delta verified field", record.get("verified") == "pytest", record)
+        code, out, _ = run(home, "state")
+        check("state shows alone/verified", "独自" in out and "验证" in out, out)
 
         code, out, _ = run(home, "state", "--json")
         payload = json.loads(out)

@@ -20,7 +20,7 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 MIN_PYTHON = (3, 10)
 
 CONSENT_LEVELS = ("off", "outline", "verbatim")
@@ -370,6 +370,10 @@ def cmd_state(args) -> int:
             last.get("learned") or "-",
             last.get("did") or "-",
             last.get("want") or "-"))
+        if last.get("alone"):
+            print("              独自: %s" % last["alone"])
+        if last.get("verified"):
+            print("              验证: %s" % last["verified"])
     return 0
 
 
@@ -628,6 +632,10 @@ def cmd_delta(args) -> int:
         "did": (args.did or "").strip(),
         "want": (args.want or "").strip(),
     }
+    if args.alone:
+        record["alone"] = args.alone.strip()
+    if args.verified:
+        record["verified"] = args.verified.strip()
     if args.evidence:
         if args.consent == "verbatim":
             record["evidence"] = [item.strip() for item in args.evidence]
@@ -866,6 +874,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--learned", default=None)
     p.add_argument("--did", default=None)
     p.add_argument("--want", default=None)
+    p.add_argument("--alone", default=None,
+                   help="what the user did without AI this round (optional)")
+    p.add_argument("--verified", default=None,
+                   help="how it was verified: test/compiler/peer/reality/self (optional)")
     p.add_argument("--evidence", action="append", default=[])
     add_consent(p, required=True)
     p.set_defaults(func=cmd_delta)

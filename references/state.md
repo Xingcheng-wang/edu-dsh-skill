@@ -13,7 +13,7 @@
 │   └── glossary.md          # 已解释过的术语
 ├── notes/                   # 你自己整理的长笔记、网页缓存
 ├── sessions/NNNN-YYYY-MM-DD-topic.md
-├── deltas.jsonl             # 每轮的“会了什么 / 做了什么 / 还想继续”
+├── deltas.jsonl             # 每轮：会了什么 / 做了什么 / 还想继续 / 独自做了什么 / 怎么验证
 └── backup/<timestamp>/      # forget 前自动备份
 ```
 
@@ -60,7 +60,8 @@ python scripts/edu_dsh.py note  --home <EDU_HOME> --consent outline \
   --topic calculus/limits --mode curiosity \
   --summary "用户自己说出极限是趋势而不是点" --next "下次用 epsilon-N 复述"
 python scripts/edu_dsh.py delta --home <EDU_HOME> --consent outline --session last \
-  --learned "能区分极限与函数值" --did "自己改了一个数列例子" --want "问了无穷小的定义"
+  --learned "能区分极限与函数值" --did "自己改了一个数列例子" --want "问了无穷小的定义" \
+  --alone "不看对话，自己把测试跑通了" --verified "pytest"
 
 # 所有权
 python scripts/edu_dsh.py export --home <EDU_HOME> --to ~/edu-backup.zip
@@ -73,6 +74,7 @@ python scripts/edu_dsh.py forget --home <EDU_HOME> --all --apply
 
 `note` 写一次会话的概要；`--mode` 取 `curiosity | systematic | skill | read | spark`。
 `delta` 写这一轮的三个增量；`--session last` 用当前会话号。
+`--alone`（独自做了什么）和 `--verified`（谁验证的：test / compiler / peer / reality / self）可选；不填就是“未验证”，不报错、不追问。
 
 ## 同意级别
 
