@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 — 2026-10-25
+
+**知识地图 + 求知欲优先。**
+
+- 新增知识地图：`learner/map.json` + 生成的 `map.md`；节点、先修边、当前位置；主干/侧枝。
+- 新增 `map` 命令（new/add/link/status/position/drop/show），写操作受 `--consent` 约束。
+- `note --node` 把会话挂到地图节点；`question --node` 把开放问题挂到节点；`state`/`doctor` 显示地图摘要。
+- 目标函数加第四问「他有没有问出一个自己的问题？」；不变量加第 5 条「火种」。
+- 新增 `references/knowledge-map.md`（粒度、co-create、反模式）与 `references/curiosity.md`（信号、喂养、杀手、收尾）。
+- `delta` 新增 `--asked` / `--returned` 可选字段；`state` 显示。
+- `moves.md` 加第 11 张卡「点火（留一个真问题）」；`learning.md` 加「信息缺口与兴趣」。
+- `eval.md`：因变量加「自己提问」；新增地图、求知欲两项评审；红线加「把地图当进度条」。
+- 地图不显示完成率/剩余节点；`forget --all` 会删除地图；export/backup 覆盖地图。
+- 79 项冒烟测试。
+
 ## 0.3.0 — 2026-10-21
 
 **AI 协作进入教学内核；未来变化退为克制的提示层。**

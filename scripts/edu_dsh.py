@@ -20,13 +20,18 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 MIN_PYTHON = (3, 10)
 
 CONSENT_LEVELS = ("off", "outline", "verbatim")
 RETRIEVAL_MODES = ("local", "web", "ask", "auto")
 CONFIDENCE_LEVELS = ("low", "medium", "high")
 SESSION_MODES = ("curiosity", "systematic", "skill", "read", "spark")
+MAP_STATUSES = ("unseen", "touched", "practicing", "can-do")
+MAP_KINDS = ("concept", "skill", "method", "problem")
+MAP_ROLES = ("trunk", "branch")
+MAP_RELATIONS = ("prereq", "part-of", "contrast")
+MAP_MARKS = {"can-do": "[x]", "practicing": "[~]", "touched": "[.]", "unseen": "[ ]"}
 
 DEFAULT_CONFIG = {
     "version": 1,
@@ -177,6 +182,10 @@ def ensure_home(home: Path, lang: str = "auto") -> Path:
             state["session_counter"] = _max_session(home)
             save_json(state_path, state)
 
+    map_path = home / "learner" / "map.json"
+    if not map_path.exists():
+        save_json(map_path, {"version": 1, "maps": []})
+
     deltas = home / "deltas.jsonl"
     if not deltas.exists():
         deltas.write_text("", encoding="utf-8")
@@ -264,6 +273,318 @@ def _read_deltas(home: Path, limit: int | None = None) -> list:
     return rows[-limit:] if limit else rows
 
 
+# ------------------------------------------------------------------ knowledge map
+
+
+def load_maps(home: Path) -> dict:
+    data = load_json(home / "learner" / "map.json", {"version": 1, "maps": []})
+    if not isinstance(data, dict):
+        data = {"version": 1, "maps": []}
+    maps = data.get("maps")
+    if not isinstance(maps, list):
+        maps = []
+    clean = []
+    for m in maps:
+        if not isinstance(m, dict):
+            continue
+        m.setdefault("id", "")
+        m.setdefault("title", m.get("id") or "")
+        m.setdefault("goal", "")
+        m.setdefault("created", today_str())
+        m.setdefault("updated", today_str())
+        nodes = []
+        for n in m.get("nodes") or []:
+            if not isinstance(n, dict):
+                continue
+            n.setdefault("id", "")
+            if not n.get("id"):
+                continue
+            n.setdefault("title", n["id"])
+            n.setdefault("kind", "concept")
+            n.setdefault("role", "trunk")
+            n.setdefault("status", "unseen")
+            n.setdefault("note", "")
+            if n["kind"] not in MAP_KINDS:
+                n["kind"] = "concept"
+            if n["role"] not in MAP_ROLES:
+                n["role"] = "trunk"
+            if n["status"] not in MAP_STATUSES:
+                n["status"] = "unseen"
+            nodes.append(n)
+        m["nodes"] = nodes
+        edges = []
+        for e in m.get("edges") or []:
+            if not isinstance(e, dict) or not e.get("from") or not e.get("to"):
+                continue
+            rel = e.get("rel", "prereq")
+            if rel not in MAP_RELATIONS:
+                rel = "prereq"
+            edges.append({"from": e["from"], "to": e["to"], "rel": rel})
+        m["edges"] = edges
+        if not isinstance(m.get("position"), dict):
+            m["position"] = {}
+        clean.append(m)
+    data["maps"] = clean
+    data["version"] = 1
+    return data
+
+
+def save_maps(home: Path, data: dict) -> None:
+    for m in data.get("maps", []):
+        m["updated"] = today_str()
+    save_json(home / "learner" / "map.json", data)
+
+
+def _find_map(data: dict, topic: str):
+    return next((m for m in data.get("maps", []) if m.get("id") == topic), None)
+
+
+def _find_node(m: dict, node_id: str):
+    return next((n for n in m.get("nodes", []) if n.get("id") == node_id), None)
+
+
+def _node_title(m: dict, node_id: str) -> str:
+    node = _find_node(m, node_id)
+    return (node or {}).get("title") or node_id
+
+
+def _upstream(m: dict, node_id: str) -> list:
+    return [e["from"] for e in m.get("edges", [])
+            if e.get("rel") == "prereq" and e.get("to") == node_id]
+
+
+def _downstream(m: dict, node_id: str) -> list:
+    return [e["to"] for e in m.get("edges", [])
+            if e.get("rel") == "prereq" and e.get("from") == node_id]
+
+
+def _tree_lines(m: dict, node_ids: list, children: dict, pos_node: str,
+                depth: int = 0, seen: set | None = None) -> list:
+    if seen is None:
+        seen = set()
+    lines = []
+    for node_id in node_ids:
+        if node_id in seen or _find_node(m, node_id) is None:
+            continue
+        seen.add(node_id)
+        node = _find_node(m, node_id)
+        mark = MAP_MARKS.get(node.get("status", "unseen"), "[ ]")
+        here = "   ← 你在这里" if node_id == pos_node else ""
+        note = ("  —— " + node["note"]) if node.get("note") else ""
+        lines.append("%s%s %s%s%s" % ("  " * depth, mark,
+                                      node.get("title") or node_id, note, here))
+        kids = [kid for kid in children.get(node_id, []) if _find_node(m, kid)]
+        if kids:
+            lines.extend(_tree_lines(m, kids, children, pos_node, depth + 1, seen))
+    return lines
+
+
+def render_map_text(data: dict, state: dict) -> str:
+    questions = state.get("questions") or []
+    blocks = []
+    for m in data.get("maps", []):
+        lines = ["# 知识地图：%s" % (m.get("title") or m.get("id")), ""]
+        if m.get("goal"):
+            lines += ["方向：%s" % m["goal"], ""]
+        pos = m.get("position") or {}
+        pos_node = pos.get("node") or ""
+        if pos_node:
+            why = (" —— " + pos["why"]) if pos.get("why") else ""
+            lines.append("你在这里：%s%s" % (_node_title(m, pos_node), why))
+            ups = _upstream(m, pos_node)
+            downs = _downstream(m, pos_node)
+            lines.append("上游：%s" % ("、".join(_node_title(m, u) for u in ups) or "（无）"))
+            lines.append("下游：%s" % ("、".join(_node_title(m, d) for d in downs) or "（无）"))
+            if pos.get("next"):
+                lines.append("下一步：%s" % pos["next"])
+            lines.append("")
+
+        prereq = [e for e in m.get("edges", []) if e.get("rel") == "prereq"]
+        children = {}
+        for edge in prereq:
+            children.setdefault(edge["from"], []).append(edge["to"])
+        has_parent = {edge["to"] for edge in prereq}
+        nodes = m.get("nodes", [])
+        roots = [n["id"] for n in nodes if n.get("role") == "trunk" and n["id"] not in has_parent]
+        if not roots:
+            roots = [n["id"] for n in nodes if n.get("role") == "trunk"]
+        lines += ["## 主干", ""]
+        tree = _tree_lines(m, roots, children, pos_node) if roots else []
+        if tree:
+            lines += tree
+        else:
+            lines.append("（还没有节点）")
+        lines.append("")
+
+        branches = [n for n in nodes if n.get("role") == "branch"]
+        contrasts = [e for e in m.get("edges", []) if e.get("rel") == "contrast"]
+        if branches or contrasts:
+            lines += ["## 侧枝 / 对照", ""]
+            for node in branches:
+                mark = MAP_MARKS.get(node.get("status", "unseen"), "[ ]")
+                here = "   ← 你在这里" if node["id"] == pos_node else ""
+                lines.append("- %s %s%s" % (mark, node.get("title") or node["id"], here))
+            for edge in contrasts:
+                lines.append("- %s ↔ %s" % (_node_title(m, edge["from"]),
+                                             _node_title(m, edge["to"])))
+            lines.append("")
+
+        if len(nodes) > 12:
+            lines += ["（图较大：%d 个节点，考虑拆分或裁剪。）" % len(nodes), ""]
+
+        lines += ["## 开放问题", ""]
+        related = [q for q in questions
+                   if isinstance(q, dict) and q.get("node") in {n["id"] for n in nodes}]
+        if related:
+            for q in related:
+                lines.append("- %s（%s）" % (q.get("text", ""), _node_title(m, q["node"])))
+        else:
+            lines.append("- （暂无）")
+        blocks.append("\n".join(lines).rstrip())
+    if not blocks:
+        return "# 知识地图\n\n还没有地图。先一起画一张。\n"
+    return "\n\n---\n\n".join(blocks)
+
+
+def write_map_file(home: Path, data: dict, state: dict) -> str:
+    text = render_map_text(data, state)
+    path = home / "map.md"
+    if data.get("maps"):
+        path.write_text(text.rstrip() + "\n", encoding="utf-8", newline="\n")
+    elif path.exists():
+        path.unlink()
+    return text
+
+
+def cmd_map(args) -> int:
+    home = ensure_home(home_of(args))
+    action = args.action
+    data = load_maps(home)
+
+    if action == "show":
+        state = load_state(home)
+        if args.topic:
+            m = _find_map(data, args.topic)
+            if m is None:
+                raise SystemExit("map not found: %s" % args.topic)
+            data = {"version": 1, "maps": [m]}
+        if args.json:
+            print_json(data)
+            return 0
+        if args.topic:
+            print(render_map_text(data, state))
+        else:
+            print(write_map_file(home, data, state))
+        return 0
+
+    if not require_consent(args, "map"):
+        return 0
+    if not args.topic:
+        raise SystemExit("map --action %s needs --topic" % action)
+
+    m = _find_map(data, args.topic)
+    if action == "new":
+        if m is not None:
+            raise SystemExit("map already exists: %s" % args.topic)
+        if not args.title:
+            raise SystemExit("map new needs --title")
+        m = {"id": args.topic, "title": args.title, "goal": args.goal or "",
+             "created": today_str(), "updated": today_str(),
+             "nodes": [], "edges": [], "position": {}}
+        data["maps"].append(m)
+        save_maps(home, data)
+        write_map_file(home, data, load_state(home))
+        print("map created: %s (%s)" % (m["id"], m["title"]))
+        return 0
+
+    if m is None:
+        raise SystemExit("map not found: %s" % args.topic)
+
+    if action == "add":
+        if not args.node or not args.title:
+            raise SystemExit("map add needs --node and --title")
+        if _find_node(m, args.node) is not None:
+            raise SystemExit("node already exists: %s" % args.node)
+        if len(m["nodes"]) >= 12:
+            eprint("warning: map has %d nodes; consider splitting or pruning" % len(m["nodes"]))
+        m["nodes"].append({
+            "id": args.node.strip(),
+            "title": args.title.strip(),
+            "kind": args.kind or "concept",
+            "role": args.role or "trunk",
+            "status": args.status or "unseen",
+            "note": "",
+        })
+        save_maps(home, data)
+        write_map_file(home, data, load_state(home))
+        print("node added: %s (%s)" % (m["nodes"][-1]["id"], m["nodes"][-1]["title"]))
+        return 0
+
+    if action == "link":
+        if not args.from_node or not args.to_node:
+            raise SystemExit("map link needs --from and --to")
+        if _find_node(m, args.from_node) is None:
+            raise SystemExit("node not found: %s" % args.from_node)
+        if _find_node(m, args.to_node) is None:
+            raise SystemExit("node not found: %s" % args.to_node)
+        if args.from_node == args.to_node:
+            raise SystemExit("cannot link a node to itself")
+        rel = args.rel or "prereq"
+        if any(e["from"] == args.from_node and e["to"] == args.to_node
+               and e["rel"] == rel for e in m["edges"]):
+            print("link already exists: %s -[%s]-> %s" % (args.from_node, rel, args.to_node))
+            return 0
+        m["edges"].append({"from": args.from_node, "to": args.to_node, "rel": rel})
+        save_maps(home, data)
+        write_map_file(home, data, load_state(home))
+        print("link added: %s -[%s]-> %s" % (args.from_node, rel, args.to_node))
+        return 0
+
+    if action == "status":
+        if not args.node or not args.status:
+            raise SystemExit("map status needs --node and --status")
+        node = _find_node(m, args.node)
+        if node is None:
+            raise SystemExit("node not found: %s" % args.node)
+        node["status"] = args.status
+        save_maps(home, data)
+        write_map_file(home, data, load_state(home))
+        print("status: %s -> %s" % (args.node, args.status))
+        return 0
+
+    if action == "position":
+        if not args.node:
+            raise SystemExit("map position needs --node")
+        if _find_node(m, args.node) is None:
+            raise SystemExit("node not found: %s" % args.node)
+        m["position"] = {"node": args.node, "why": args.why or "", "next": args.next or ""}
+        save_maps(home, data)
+        write_map_file(home, data, load_state(home))
+        print("position: %s" % args.node)
+        return 0
+
+    if action == "drop":
+        if args.node:
+            node = _find_node(m, args.node)
+            if node is None:
+                raise SystemExit("node not found: %s" % args.node)
+            m["nodes"] = [n for n in m["nodes"] if n["id"] != args.node]
+            m["edges"] = [e for e in m["edges"]
+                          if e["from"] != args.node and e["to"] != args.node]
+            if (m.get("position") or {}).get("node") == args.node:
+                m["position"] = {}
+            message = "node removed: %s" % args.node
+        else:
+            data["maps"] = [item for item in data["maps"] if item["id"] != args.topic]
+            message = "map removed: %s" % args.topic
+        save_maps(home, data)
+        write_map_file(home, data, load_state(home))
+        print(message)
+        return 0
+
+    raise SystemExit("unknown map action: %s" % action)
+
+
 # ------------------------------------------------------------------ commands
 
 
@@ -312,6 +633,9 @@ def cmd_doctor(args) -> int:
     print("questions: %d" % len(state.get("questions") or []))
     print("sessions : %d" % len(list((home / "sessions").glob("*.md"))))
     print("deltas   : %d" % len(_read_deltas(home)))
+    maps = load_maps(home).get("maps") or []
+    print("maps     : %d map(s), %d node(s)" % (
+        len(maps), sum(len(m.get("nodes") or []) for m in maps)))
     return 0
 
 
@@ -326,6 +650,7 @@ def cmd_state(args) -> int:
             "home": str(home),
             "config": cfg,
             "state": state,
+            "maps": load_maps(home).get("maps") or [],
             "sessions": [p.name for p in sessions[-10:]],
             "recent_deltas": _read_deltas(home, 5),
         })
@@ -338,6 +663,24 @@ def cmd_state(args) -> int:
         print("current  : %s" % state.get("current_topic"))
     if state.get("next_step"):
         print("next     : %s" % state.get("next_step"))
+
+    maps = load_maps(home).get("maps") or []
+    if maps:
+        print("\nmaps:")
+        for m in maps[:5]:
+            pos = m.get("position") or {}
+            node = pos.get("node")
+            if node:
+                ups = _upstream(m, node)
+                downs = _downstream(m, node)
+                print("  %s → %s（上：%s；下：%s）" % (
+                    m.get("title") or m.get("id"), _node_title(m, node),
+                    "、".join(_node_title(m, u) for u in ups) or "无",
+                    "、".join(_node_title(m, d) for d in downs) or "无"))
+            else:
+                print("  %s（未定位）" % (m.get("title") or m.get("id")))
+    else:
+        print("\nmaps     : (none)")
 
     goals = state.get("goals") or []
     if goals:
@@ -374,6 +717,10 @@ def cmd_state(args) -> int:
             print("              独自: %s" % last["alone"])
         if last.get("verified"):
             print("              验证: %s" % last["verified"])
+        if last.get("asked"):
+            print("              问: %s" % last["asked"])
+        if last.get("returned"):
+            print("              回: %s" % last["returned"])
     return 0
 
 
@@ -382,6 +729,7 @@ def _session_meta(path: Path) -> dict:
     meta = {
         "file": path.name,
         "topic": "",
+        "node": "",
         "mode": "",
         "consent": "legacy",
         "quotes": ("## 原话" in text) or ("## 用户原话" in text),
@@ -389,6 +737,8 @@ def _session_meta(path: Path) -> dict:
     for line in text.splitlines():
         if line.startswith("- topic:"):
             meta["topic"] = line.split(":", 1)[1].strip()
+        elif line.startswith("- node:"):
+            meta["node"] = line.split(":", 1)[1].strip()
         elif line.startswith("- mode:"):
             meta["mode"] = line.split(":", 1)[1].strip()
         elif line.startswith("- consent:"):
@@ -459,14 +809,19 @@ def cmd_question(args) -> int:
         return 0
 
     if args.add:
-        items.append({"text": args.add.strip(), "added": today_str()})
+        entry = {"text": args.add.strip(), "added": today_str()}
+        if getattr(args, "node", None):
+            entry["node"] = args.node.strip()
+        items.append(entry)
         save_state(home, state)
+        write_map_file(home, load_maps(home), state)
         print("question added: %s" % args.add.strip())
         return 0
 
     index = _parse_index(args.drop, len(items), "question")
     removed = items.pop(index - 1)
     save_state(home, state)
+    write_map_file(home, load_maps(home), state)
     print("question removed: %s" % removed.get("text", ""))
     return 0
 
@@ -589,6 +944,10 @@ def cmd_note(args) -> int:
         "# Session %04d — %s — %s" % (number, today_str(), mode),
         "",
         "- topic: %s" % args.topic.strip(),
+    ]
+    if args.node:
+        lines.append("- node: %s" % args.node.strip())
+    lines += [
         "- mode: %s" % mode,
         "- consent: %s" % args.consent,
         "",
@@ -636,6 +995,10 @@ def cmd_delta(args) -> int:
         record["alone"] = args.alone.strip()
     if args.verified:
         record["verified"] = args.verified.strip()
+    if getattr(args, "asked", None):
+        record["asked"] = args.asked.strip()
+    if getattr(args, "returned", None):
+        record["returned"] = args.returned.strip()
     if args.evidence:
         if args.consent == "verbatim":
             record["evidence"] = [item.strip() for item in args.evidence]
@@ -658,7 +1021,7 @@ def cmd_export(args) -> int:
         target.mkdir(parents=True, exist_ok=True)
         archive = target / ("edu-export-%s.zip" % today_str())
 
-    entries = ["config.json", "learner", "sessions", "notes", "deltas.jsonl"]
+    entries = ["config.json", "learner", "sessions", "notes", "deltas.jsonl", "map.md"]
     with zipfile.ZipFile(str(archive), "w", zipfile.ZIP_DEFLATED) as zf:
         for rel in entries:
             source = home / rel
@@ -676,7 +1039,7 @@ def _backup(home: Path) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     dest = home / "backup" / stamp
     dest.mkdir(parents=True, exist_ok=True)
-    for rel in ("config.json", "learner", "sessions", "notes", "deltas.jsonl"):
+    for rel in ("config.json", "learner", "sessions", "notes", "deltas.jsonl", "map.md"):
         source = home / rel
         if source.is_file():
             shutil.copy2(str(source), str(dest / rel))
@@ -702,7 +1065,7 @@ def cmd_forget(args) -> int:
         actions.append("drop delta rows for session %04d" % number)
     else:
         actions.append("delete all learner state, glossary, profile, notes")
-        actions.append("delete all sessions and deltas")
+        actions.append("delete all sessions, deltas, and the knowledge map")
         actions.append("keep config.json")
 
     for action in actions:
@@ -728,6 +1091,9 @@ def cmd_forget(args) -> int:
         for rel in ("learner", "sessions", "notes"):
             shutil.rmtree(home / rel, ignore_errors=True)
         (home / "deltas.jsonl").write_text("", encoding="utf-8")
+        map_md = home / "map.md"
+        if map_md.exists():
+            map_md.unlink()
         ensure_home(home)
 
     print("done.")
@@ -815,6 +1181,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_records)
 
+    p = sub.add_parser("map", help="build and show the knowledge map")
+    add_home(p)
+    p.add_argument("--action", required=True,
+                   choices=("new", "add", "link", "status", "position", "drop", "show"))
+    p.add_argument("--topic", default=None)
+    p.add_argument("--title", default=None)
+    p.add_argument("--goal", default=None)
+    p.add_argument("--node", default=None)
+    p.add_argument("--from", dest="from_node", default=None)
+    p.add_argument("--to", dest="to_node", default=None)
+    p.add_argument("--rel", default=None, choices=MAP_RELATIONS)
+    p.add_argument("--kind", default=None, choices=MAP_KINDS)
+    p.add_argument("--role", default=None, choices=MAP_ROLES)
+    p.add_argument("--status", default=None, choices=MAP_STATUSES)
+    p.add_argument("--why", default=None)
+    p.add_argument("--next", default=None)
+    p.add_argument("--json", action="store_true")
+    add_consent(p)
+    p.set_defaults(func=cmd_map)
+
     p = sub.add_parser("goal", help="add, drop or list goals")
     add_home(p)
     group = p.add_mutually_exclusive_group()
@@ -842,6 +1228,7 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--add", default=None)
     group.add_argument("--drop", default=None)
     group.add_argument("--list", action="store_true")
+    p.add_argument("--node", default=None, help="attach the question to a map node")
     add_consent(p)
     p.set_defaults(func=cmd_question)
 
@@ -862,6 +1249,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--topic", required=True)
     p.add_argument("--summary", required=True)
     p.add_argument("--mode", default=None, choices=SESSION_MODES)
+    p.add_argument("--node", default=None, help="map node covered this session")
     p.add_argument("--next", default=None)
     p.add_argument("--evidence", action="append", default=[],
                    help="verbatim only; ignored under outline")
@@ -878,6 +1266,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="what the user did without AI this round (optional)")
     p.add_argument("--verified", default=None,
                    help="how it was verified: test/compiler/peer/reality/self (optional)")
+    p.add_argument("--asked", default=None,
+                   help="a question the user asked on their own (optional)")
+    p.add_argument("--returned", default=None,
+                   help="an old question the user came back to (optional)")
     p.add_argument("--evidence", action="append", default=[])
     add_consent(p, required=True)
     p.set_defaults(func=cmd_delta)

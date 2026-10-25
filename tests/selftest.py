@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -143,6 +144,86 @@ def main() -> int:
         check("state json", code == 0 and payload["state"]["goals"], out[:200])
         check("state has caps", payload["state"]["capabilities"][0]["id"] == "c1")
 
+        # knowledge map
+        code, out, _ = run(home, "map", "--action", "new", "--topic", "calculus",
+                           "--title", "微积分", "--goal", "理解变化与累积",
+                           "--consent", "outline")
+        check("map new", code == 0 and "map created" in out, out)
+        check("map.json created", (home / "learner" / "map.json").exists())
+        check("map.md created", (home / "map.md").exists())
+
+        for node_id, title in (("functions", "函数"), ("limits", "极限"),
+                               ("derivative", "导数")):
+            code, out, _ = run(home, "map", "--action", "add", "--topic", "calculus",
+                               "--node", node_id, "--title", title, "--consent", "outline")
+            check("map add %s" % node_id, code == 0 and "node added" in out, out)
+
+        code, out, _ = run(home, "map", "--action", "link", "--topic", "calculus",
+                           "--from", "functions", "--to", "limits", "--consent", "outline")
+        check("map link", code == 0 and "link added" in out, out)
+        run(home, "map", "--action", "link", "--topic", "calculus",
+            "--from", "limits", "--to", "derivative", "--consent", "outline")
+
+        code, out, _ = run(home, "map", "--action", "status", "--topic", "calculus",
+                           "--node", "limits", "--status", "practicing", "--consent", "outline")
+        check("map status", code == 0 and "practicing" in out, out)
+
+        code, out, _ = run(home, "map", "--action", "position", "--topic", "calculus",
+                           "--node", "limits", "--why", "导数的入口",
+                           "--next", "用 epsilon-N 说清楚", "--consent", "outline")
+        check("map position", code == 0 and "position: limits" in out, out)
+
+        code, out, _ = run(home, "map", "--action", "show")
+        check("map show position", "你在这里" in out and "导数的入口" in out, out)
+        check("map show no progress", "完成率" not in out and "剩余" not in out, out)
+
+        code, out, _ = run(home, "map", "--action", "show", "--json")
+        map_payload = json.loads(out)
+        check("map show json",
+              map_payload["maps"][0]["nodes"][1]["status"] == "practicing", out[:200])
+
+        code, _, _ = run(home, "map", "--action", "add", "--topic", "calculus",
+                         "--node", "limits", "--title", "重复", "--consent", "outline")
+        check("map duplicate node rejected", code != 0)
+        code, _, _ = run(home, "map", "--action", "link", "--topic", "calculus",
+                         "--from", "limits", "--to", "nope", "--consent", "outline")
+        check("map link unknown rejected", code != 0)
+        code, _, _ = run(home, "map", "--action", "link", "--topic", "calculus",
+                         "--from", "limits", "--to", "limits", "--consent", "outline")
+        check("map self link rejected", code != 0)
+
+        code, out, _ = run(home, "map", "--action", "status", "--topic", "calculus",
+                           "--node", "limits", "--status", "can-do", "--consent", "off")
+        check("map off blocked", code == 0 and "not recorded" in out, out)
+        code, out, _ = run(home, "map", "--action", "show", "--json")
+        still = json.loads(out)["maps"][0]["nodes"][1]["status"]
+        check("map off wrote nothing", still == "practicing", still)
+
+        code, out, _ = run(home, "note", "--topic", "calculus/limits", "--node", "limits",
+                           "--summary", "地图节点记录", "--consent", "outline")
+        check("note node", code == 0 and "session" in out, out)
+        code, out, _ = run(home, "records", "--json")
+        rows = json.loads(out)
+        check("records node", any(row.get("node") == "limits" for row in rows), out[:200])
+
+        code, out, _ = run(home, "question", "--add", "为什么极限不要求该点有定义？",
+                           "--node", "limits", "--consent", "outline")
+        check("question node", code == 0 and "question added" in out, out)
+        code, out, _ = run(home, "map", "--action", "show")
+        check("map shows question", "该点有定义" in out, out)
+
+        code, out, _ = run(home, "state")
+        check("state maps line", "maps:" in out and "微积分" in out, out)
+
+        code, out, _ = run(home, "delta", "--learned", "x", "--asked", "为什么是极限？",
+                           "--returned", "上次的连续问题", "--consent", "outline")
+        check("delta curiosity fields", code == 0, out)
+        last_row = json.loads(
+            (home / "deltas.jsonl").read_text(encoding="utf-8").strip().splitlines()[-1])
+        check("delta asked stored", last_row.get("asked") == "为什么是极限？", last_row)
+        code, out, _ = run(home, "state")
+        check("state shows asked", "问:" in out and "回:" in out, out)
+
         archive = root / "backup.zip"
         code, out, _ = run(home, "export", "--to", str(archive))
         check("export exits 0", code == 0 and archive.exists(), out)
@@ -150,6 +231,7 @@ def main() -> int:
             names = zf.namelist()
         check("export contents", "config.json" in names and "learner/state.json" in names
               and any(name.startswith("sessions/") for name in names), str(names))
+        check("export map", "learner/map.json" in names and "map.md" in names, str(names))
 
         # forget: dry-run, then apply, then numbering must not be reused
         code, out, _ = run(home, "forget", "--session", "0001")
@@ -163,7 +245,8 @@ def main() -> int:
 
         code, out, _ = run(home, "note", "--topic", "calculus/integral", "--summary", "下一轮",
                            "--consent", "outline")
-        check("session number not reused", "session 0003" in out, out)
+        match = re.search(r"session (\d{4})", out)
+        check("session number not reused", bool(match) and int(match.group(1)) > 3, out)
 
         # config: bad value rejected, corrupt file fails closed
         code, _, _ = run(home, "config", "--set", "retrieval_mode=cloud")
@@ -184,6 +267,9 @@ def main() -> int:
         check("forget all kept config", (home / "config.json").exists())
         state = json.loads((home / "learner" / "state.json").read_text(encoding="utf-8"))
         check("forget all reset state", not state["goals"] and state["session_counter"] == 0)
+        check("forget all removed map.md", not (home / "map.md").exists())
+        maps = json.loads((home / "learner" / "map.json").read_text(encoding="utf-8"))
+        check("forget all reset map", maps["maps"] == [])
 
         # hand-written / legacy state must not crash (plain strings, int session ids)
         manual = root / "manual"
@@ -210,6 +296,22 @@ def main() -> int:
         check("hand-written capability shown", "瓶颈在写入端" in out, out)
         code, out, _ = run(manual, "records")
         check("verbatim quotes detected", "yes" in out, out)
+
+        # hand-written map (missing role / status / position) must not crash
+        (manual / "learner" / "map.json").write_text(json.dumps({
+            "version": 1,
+            "maps": [{
+                "id": "x", "title": "X",
+                "nodes": [{"id": "a", "title": "A"}, {"id": "b", "title": "B"}],
+                "edges": [{"from": "a", "to": "b"}],
+            }],
+        }, ensure_ascii=False), encoding="utf-8")
+        code, out, err = run(manual, "map", "--action", "show", "--json")
+        check("hand-written map tolerated", code == 0, err)
+        manual_map = json.loads(out)["maps"][0]
+        check("hand-written map normalized",
+              manual_map["nodes"][0]["status"] == "unseen"
+              and manual_map["position"] == {}, out[:200])
 
         print("\n%d passed, %d failed" % (passed, failed))
         return 1 if failed else 0

@@ -10,7 +10,9 @@
 ├── learner/
 │   ├── profile.md           # 他是谁、想做什么、怎么学（人可读）
 │   ├── state.json           # 目标、会什么、卡在哪、下一个动作
-│   └── glossary.md          # 已解释过的术语
+│   ├── glossary.md          # 已解释过的术语
+│   └── map.json             # 知识地图：节点、先修边、当前位置
+├── map.md                   # 人可读的知识地图（脚本生成）
 ├── notes/                   # 你自己整理的长笔记、网页缓存
 ├── sessions/NNNN-YYYY-MM-DD-topic.md
 ├── deltas.jsonl             # 每轮：会了什么 / 做了什么 / 还想继续 / 独自做了什么 / 怎么验证
@@ -44,6 +46,15 @@ python scripts/edu_dsh.py doctor  --home <EDU_HOME>
 python scripts/edu_dsh.py state   --home <EDU_HOME> [--json]
 python scripts/edu_dsh.py records --home <EDU_HOME>
 
+# 知识地图（写操作都要带 --consent）
+python scripts/edu_dsh.py map --home <EDU_HOME> --action new --topic calculus --title 微积分 --goal "理解变化与累积" --consent outline
+python scripts/edu_dsh.py map --home <EDU_HOME> --action add --topic calculus --node limits --title 极限 --kind concept --role trunk --consent outline
+python scripts/edu_dsh.py map --home <EDU_HOME> --action link --topic calculus --from functions --to limits --rel prereq --consent outline
+python scripts/edu_dsh.py map --home <EDU_HOME> --action status --topic calculus --node limits --status practicing --consent outline
+python scripts/edu_dsh.py map --home <EDU_HOME> --action position --topic calculus --node limits --why "导数的入口" --next "用 epsilon-N 说清楚" --consent outline
+python scripts/edu_dsh.py map --home <EDU_HOME> --action drop --topic calculus --node limits --consent outline
+python scripts/edu_dsh.py map --home <EDU_HOME> --action show [--topic calculus] [--json]
+
 # 写学习状态（都要带 --consent）
 python scripts/edu_dsh.py goal     --home <EDU_HOME> --consent outline --add "做出一个能跑的心跳灯"
 python scripts/edu_dsh.py goal     --home <EDU_HOME> --consent outline --drop 1
@@ -57,11 +68,12 @@ python scripts/edu_dsh.py glossary --home <EDU_HOME> --consent outline --add \
 
 # 会话记录
 python scripts/edu_dsh.py note  --home <EDU_HOME> --consent outline \
-  --topic calculus/limits --mode curiosity \
+  --topic calculus/limits --node limits --mode curiosity \
   --summary "用户自己说出极限是趋势而不是点" --next "下次用 epsilon-N 复述"
 python scripts/edu_dsh.py delta --home <EDU_HOME> --consent outline --session last \
   --learned "能区分极限与函数值" --did "自己改了一个数列例子" --want "问了无穷小的定义" \
-  --alone "不看对话，自己把测试跑通了" --verified "pytest"
+  --alone "不看对话，自己把测试跑通了" --verified "pytest" \
+  --asked "为什么极限不要求该点有定义？" --returned "上次的连续问题"
 
 # 所有权
 python scripts/edu_dsh.py export --home <EDU_HOME> --to ~/edu-backup.zip
@@ -73,14 +85,16 @@ python scripts/edu_dsh.py forget --home <EDU_HOME> --all --apply
 ## 会话记录
 
 `note` 写一次会话的概要；`--mode` 取 `curiosity | systematic | skill | read | spark`。
+`note --node <id>` 把这次会话挂到知识地图的节点上（可选）。
 `delta` 写这一轮的三个增量；`--session last` 用当前会话号。
 `--alone`（独自做了什么）和 `--verified`（谁验证的：test / compiler / peer / reality / self）可选；不填就是“未验证”，不报错、不追问。
+`--asked`（他自己问出的问题）和 `--returned`（他回到的旧问题）可选；只用于老师接续与评测，不向用户显示计数。
 
 ## 同意级别
 
 | 级别 | 写什么 | 不写什么 |
 |---|---|---|
-| `off` | 什么都不写 | 会话、状态、术语、delta 全部不写 |
+| `off` | 什么都不写 | 会话、状态、术语、地图、delta 全部不写 |
 | `outline` | 转述的概要、会了什么、做了什么 | 原话、引号里的片段 |
 | `verbatim` | 上面全部 + 原话片段 | — |
 
@@ -117,6 +131,7 @@ python scripts/edu_dsh.py forget --home <EDU_HOME> --all --apply
 ```
 [EDU STATE]
 goal: <一句话>
+map: <topic>@<node>
 can: <他刚刚证明自己能做的>
 stuck: <卡点>
 next: <下一个最小动作>
