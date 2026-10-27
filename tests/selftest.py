@@ -152,10 +152,15 @@ def main() -> int:
         check("map.json created", (home / "learner" / "map.json").exists())
         check("map.md created", (home / "map.md").exists())
 
-        for node_id, title in (("functions", "函数"), ("limits", "极限"),
-                               ("derivative", "导数")):
-            code, out, _ = run(home, "map", "--action", "add", "--topic", "calculus",
-                               "--node", node_id, "--title", title, "--consent", "outline")
+        node_specs = (("functions", "函数", None),
+                      ("limits", "极限", "要解决的问题：无限接近却不一定到达"),
+                      ("derivative", "导数", None))
+        for node_id, title, note in node_specs:
+            argv = ["map", "--action", "add", "--topic", "calculus",
+                    "--node", node_id, "--title", title, "--consent", "outline"]
+            if note:
+                argv += ["--note", note]
+            code, out, _ = run(home, *argv)
             check("map add %s" % node_id, code == 0 and "node added" in out, out)
 
         code, out, _ = run(home, "map", "--action", "link", "--topic", "calculus",
@@ -175,6 +180,7 @@ def main() -> int:
 
         code, out, _ = run(home, "map", "--action", "show")
         check("map show position", "你在这里" in out and "导数的入口" in out, out)
+        check("map node note", "要解决的问题" in out, out)
         check("map show no progress", "完成率" not in out and "剩余" not in out, out)
 
         code, out, _ = run(home, "map", "--action", "show", "--json")

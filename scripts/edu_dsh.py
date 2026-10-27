@@ -20,7 +20,7 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 MIN_PYTHON = (3, 10)
 
 CONSENT_LEVELS = ("off", "outline", "verbatim")
@@ -513,7 +513,7 @@ def cmd_map(args) -> int:
             "kind": args.kind or "concept",
             "role": args.role or "trunk",
             "status": args.status or "unseen",
-            "note": "",
+            "note": (args.note or "").strip(),
         })
         save_maps(home, data)
         write_map_file(home, data, load_state(home))
@@ -1197,6 +1197,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--status", default=None, choices=MAP_STATUSES)
     p.add_argument("--why", default=None)
     p.add_argument("--next", default=None)
+    p.add_argument("--note", default=None,
+                   help="what problem this node answers (optional)")
     p.add_argument("--json", action="store_true")
     add_consent(p)
     p.set_defaults(func=cmd_map)

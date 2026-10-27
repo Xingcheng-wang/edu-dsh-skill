@@ -14,6 +14,7 @@
 - **5–9 个节点**，一个节点约一次会话能碰。超过 12 个，拆图或裁剪。
 - 节点分两类：`trunk`（主干，必须经过）和 `branch`（侧枝，可以晚点或跳过）。
 - 节点分四种：`concept`（概念）、`skill`（技能）、`method`（方法）、`problem`（问题/案例）。
+- 每个节点最好带一句“要解决的问题”——用 `map add --note "要解决的问题：……"`。它是“回到现场”的入口。
 
 不要把“第一章、第二章”当节点——那是目录，不是知识结构。
 好节点长这样：「极限」「导数」「链式法则」「用导数解释优化」。
@@ -106,7 +107,7 @@
 
 ```bash
 map --action new      --topic calculus --title 微积分 [--goal "..."] --consent outline
-map --action add      --topic calculus --node limits --title 极限 [--kind concept] [--role trunk] --consent outline
+map --action add      --topic calculus --node limits --title 极限 [--kind concept] [--role trunk] [--note "要解决的问题：……"] --consent outline
 map --action link     --topic calculus --from functions --to limits [--rel prereq] --consent outline
 map --action status   --topic calculus --node limits --status practicing --consent outline
 map --action position --topic calculus --node limits --why "导数的入口" --next "..." --consent outline
