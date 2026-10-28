@@ -76,8 +76,11 @@
 
 ## 7. 每轮一句话 + 会话后更新
 
-- 每轮开头（或切入正题时）一句：
-  > 我们在「微积分」的「极限」——它上游是函数，下游是导数。
+- 每轮第一行报**学习状态**（见 7.5），再给位置一句话：
+  > 状态：稳步推进中 · 微积分 / 极限 · 下一步：用 ε-δ 说清楚
+  > 我们在「微积分」的「极限」——上游是函数，下游是导数。
+- 临时岔路时，状态行要同时报“当前位置 + 主线”：
+  > 状态：分支中 · QUIC（临时） · 主线：TCP 三次握手
 - 会话结束按实际进展更新：
   - 他能自己做出来了 → `map status --status can-do`
   - 只是见过 → `touched`
@@ -85,6 +88,76 @@
   - 新问题 → `question --add ... --node ...`
 
 **按兴趣推进，不按地图顺序推进。** 他想跳，就跳；提醒先修，但不拦。
+
+## 7.5 学习状态机：稳步、深入、分支、回头
+
+地图负责“位置”，状态行负责“方向”。每轮第一行一行，不评分、不显示完成度。
+
+### 状态与转移
+
+```
+idle（未定位） ──定位置──▶ steady（稳步推进）
+steady ──深入──▶ deepening ──▶ steady
+steady ──分支──▶ branching ──▶ steady（回主线）｜ switching（换主线）
+steady ──回头──▶ reviewing ──▶ steady（回主线）｜ switching
+steady ──记下──▶ parked ──▶ steady
+```
+
+| 状态 | 触发 | 状态行 | 落盘 |
+|---|---|---|---|
+| 稳步 | 主线推进；普通澄清/补充 | `状态：稳步推进中 · 地图/节点 · 下一步：…` | mode=mainline |
+| 深入 | 同一节点问机制、证明、边界 | `状态：深入中 · 节点 · 主线不变` | 不改数据 |
+| 分支 | 新节点/新领域/新应用，且继续 | `状态：分支中 · 新节点（临时） · 主线：X` | mode=branch + return_to |
+| 回头 | 当前节点的先修缺口，且继续 | `状态：回头补先修 · 先修节点 · 主线：X` | mode=review + return_to |
+| 记下 | 记下问题，先走完主线 | `状态：已记下 · “问题” · 主线：X` | question |
+| 换主线 | 用户同意把岔路变主线 | `状态：换主线 · 新节点` | mode=mainline |
+
+**判定阈值**：会不会改变“这一轮在学什么”。
+- 不会（同节点、同目标）→ 稳步或深入。
+- 会 → 分支/回头，给选项。
+- 普通追问不要标成“跑题”。
+
+### 话术（≤2 行）
+
+- 深入：状态行已说明，不再重复；直接讲深。
+- 分支：`这是新分支，不在「…」这条线上。现在岔过去、记下来，还是先走完这步？`
+- 回头：`这是往回走——它其实是「…」，是「…」的上游。先补上游，还是记下来？`
+- 记下：`先记在开放问题里，主线继续。`
+- 收尾：`要回主线，还是把主线换到这里？` 换主线要用户明确同意。
+
+### 书签
+
+- 继续岔路：`map position --mode branch|review --return-to <主线>`。
+- 回来：`map position --node <主线>`（自动清书签）。
+- `map.md` 显示：
+  ```
+  你在这里：QUIC（临时 · 分支）—— QUIC 0-RTT 的安全代价
+  主线：TCP 三次握手
+  ```
+- `state` 显示：`net → QUIC（分支；主线 TCP 三次握手）`。
+- 无地图时：口头书签（“主线：X → 下一步 Y”），不强行建图。
+
+### 记录
+
+- 记下：`question --add "…" --node <当前节点>`，位置不变。
+- 分支：`map add` 新节点 → `map link` → `map position --mode branch --return-to <原节点>`。
+- 回头：同上，`--mode review`。
+- 换主线：用户同意后 `map position --node <新节点>`（不带 return_to）。
+
+### 反模式
+
+- 每轮状态行写成一段/一张表，刷屏。
+- 跟着新问题跑丢主线，回来找不到。
+- 把普通追问标成跑题，打断好奇。
+- 用“先学完这个”拦人。
+- 岔路结束不问“回主线还是换主线”。
+- 把状态行做成完成率、步数、连续天数、进度条。
+
+### 三个短例子
+
+- 学导数时问“极限到底是什么？”→ 回头补先修；`--mode review --return-to derivative`。
+- 学 TCP 时问“QUIC 安全吗？”→ 新分支；`--mode branch --return-to tcp-handshake`。
+- 学导数时问“这里为什么是负号？”→ 同一节点深入/稳步；不设书签，直接答。
 
 ## 8. 三个例子
 
@@ -110,7 +183,7 @@ map --action new      --topic calculus --title 微积分 [--goal "..."] --consen
 map --action add      --topic calculus --node limits --title 极限 [--kind concept] [--role trunk] [--note "要解决的问题：……"] --consent outline
 map --action link     --topic calculus --from functions --to limits [--rel prereq] --consent outline
 map --action status   --topic calculus --node limits --status practicing --consent outline
-map --action position --topic calculus --node limits --why "导数的入口" --next "..." --consent outline
+map --action position --topic calculus --node limits --why "导数的入口" --next "..." [--mode branch|review --return-to <mainline>] --consent outline
 map --action drop     --topic calculus [--node limits] --consent outline
 map --action show     [--topic calculus] [--json]
 ```

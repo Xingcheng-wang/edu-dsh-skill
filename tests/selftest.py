@@ -188,6 +188,64 @@ def main() -> int:
         check("map show json",
               map_payload["maps"][0]["nodes"][1]["status"] == "practicing", out[:200])
 
+        # state machine: branch / review bookmarks
+        code, out, _ = run(home, "map", "--action", "position", "--topic", "calculus",
+                           "--node", "derivative", "--mode", "branch",
+                           "--return-to", "limits", "--why", "临时：看看导数",
+                           "--next", "回到极限", "--consent", "outline")
+        check("map position branch", code == 0 and "position: derivative" in out, out)
+        code, out, _ = run(home, "map", "--action", "show")
+        check("map branch render", "临时 · 分支" in out and "主线：极限" in out, out)
+        code, out, _ = run(home, "state")
+        check("state branch line", "分支；主线" in out, out)
+        code, out, _ = run(home, "map", "--action", "show", "--json")
+        pos = json.loads(out)["maps"][0]["position"]
+        check("map position json branch",
+              pos.get("mode") == "branch" and pos.get("return_to") == "limits", out[:200])
+
+        code, out, _ = run(home, "map", "--action", "position", "--topic", "calculus",
+                           "--node", "functions", "--mode", "review",
+                           "--return-to", "derivative", "--consent", "outline")
+        check("map position review", code == 0 and "position: functions" in out, out)
+        code, out, _ = run(home, "map", "--action", "show")
+        check("map review render", "临时 · 回头" in out, out)
+
+        code, _, _ = run(home, "map", "--action", "position", "--topic", "calculus",
+                         "--node", "derivative", "--mode", "branch", "--consent", "outline")
+        check("map branch needs return-to", code != 0)
+        code, _, _ = run(home, "map", "--action", "position", "--topic", "calculus",
+                         "--node", "derivative", "--mode", "branch",
+                         "--return-to", "nope", "--consent", "outline")
+        check("map unknown return-to rejected", code != 0)
+        code, _, _ = run(home, "map", "--action", "position", "--topic", "calculus",
+                         "--node", "derivative", "--mode", "branch",
+                         "--return-to", "derivative", "--consent", "outline")
+        check("map self return-to rejected", code != 0)
+
+        code, out, _ = run(home, "map", "--action", "position", "--topic", "calculus",
+                           "--node", "limits", "--why", "导数的入口", "--consent", "outline")
+        check("map position clears bookmark", code == 0 and "position: limits" in out, out)
+        code, out, _ = run(home, "map", "--action", "show", "--json")
+        pos = json.loads(out)["maps"][0]["position"]
+        check("map bookmark cleared",
+              pos.get("mode") == "mainline" and "return_to" not in pos, out[:200])
+
+        run(home, "map", "--action", "add", "--topic", "calculus",
+            "--node", "temp", "--title", "临时", "--consent", "outline")
+        run(home, "map", "--action", "position", "--topic", "calculus",
+            "--node", "derivative", "--mode", "branch",
+            "--return-to", "temp", "--consent", "outline")
+        code, out, _ = run(home, "map", "--action", "drop", "--topic", "calculus",
+                           "--node", "temp", "--consent", "outline")
+        check("drop return-to node", code == 0 and "node removed" in out, out)
+        code, out, _ = run(home, "map", "--action", "show", "--json")
+        pos = json.loads(out)["maps"][0]["position"]
+        check("drop clears bookmark",
+              pos.get("node") == "derivative" and pos.get("mode") == "mainline"
+              and "return_to" not in pos, out[:200])
+        run(home, "map", "--action", "position", "--topic", "calculus",
+            "--node", "limits", "--why", "导数的入口", "--consent", "outline")
+
         code, _, _ = run(home, "map", "--action", "add", "--topic", "calculus",
                          "--node", "limits", "--title", "重复", "--consent", "outline")
         check("map duplicate node rejected", code != 0)

@@ -3,7 +3,7 @@
 > 把对话变成“一位懂认知规律的老师教一个具体的人”。
 > 目标是让他**更会**，也**更想学**；两者冲突时，先保护想学。
 
-- 版本：0.9.1
+- 版本：0.10.0
 - 运行环境：Python 3.10+，仅标准库
 - 形态：Agent Skill（`SKILL.md` + 11 份参考 + 1 个本地 CLI + 冒烟测试）
 - 许可：MIT
@@ -129,7 +129,28 @@
 
 细节见 [`references/curiosity.md`](references/curiosity.md)。
 
-### 4.6 规则是答案：还原智慧诞生的现场
+### 4.6 学习状态机：稳步、深入、分支、回头
+
+每轮第一行一行状态，不评分、不显示完成度：
+
+| 状态 | 何时 | 例子 |
+|---|---|---|
+| **稳步推进中** | 主线推进；普通澄清 | `状态：稳步推进中 · 微积分/导数 · 下一步：…` |
+| **深入中** | 同一节点问机制/证明/边界 | `状态：深入中 · 极限 · 主线不变` |
+| **分支中** | 新节点/新领域，且继续 | `状态：分支中 · QUIC（临时） · 主线：TCP 三次握手` |
+| **回头补先修** | 当前节点的先修缺口 | `状态：回头补先修 · 极限 · 主线：导数` |
+| **已记下** | 记下问题，先走完主线 | `状态：已记下 · “为什么不是紫？” · 主线：光的散射` |
+| **换主线** | 用户同意把岔路变主线 | `状态：换主线 · QUIC` |
+
+判定：会不会改变“这一轮在学什么”。同节点深挖→深入；普通追问→稳步；新节点→分支；先修→回头。普通追问不标“跑题”。
+
+- 分支/回头：一句话 + 三选项（继续 / 记下 / 回主线）；继续时用 `map position --mode branch|review --return-to` 保留主线书签。
+- 收尾问一次：回主线，还是换主线（换主线要用户同意）。
+- 不阻拦、不刷屏、不说教；停止/紧急不显示。
+
+细节、转移图和话术见 [`references/knowledge-map.md`](references/knowledge-map.md) 的“学习状态机”。
+
+### 4.7 规则是答案：还原智慧诞生的现场
 
 任何规则、定义、公式、约定，都是某个人在某个处境下，为了解决某个问题，在一堆不完美的选项里选的一个。
 
@@ -142,7 +163,7 @@
 
 四个现场（ε-δ 极限、Python 缩进、TCP 三次握手、无罪推定）和反模式见 [`references/genesis.md`](references/genesis.md)。
 
-### 4.7 研究依据
+### 4.8 研究依据
 
 - **给答案会伤学习**：土耳其高中数学 RCT（PNAS 2025），裸用 GPT-4 练习时 +48%、撤掉 AI 后考试 −17%；辅导版（只给提示、教师提供正确解与常见错误）+127%，撤掉后与对照持平。同一研究里，GPT-4 只有 51% 的时候答对，学生却**不觉得自己学得更差**。
 - **设计对了能超过课堂**：哈佛物理 RCT（Scientific Reports 2025），定制 AI 导师让学生用更少时间学得更多。
@@ -191,6 +212,7 @@ edu_dsh.py map --action add      --topic calculus --node limits --title 极限 -
 edu_dsh.py map --action link     --topic calculus --from functions --to limits
 edu_dsh.py map --action status   --topic calculus --node limits --status practicing
 edu_dsh.py map --action position --topic calculus --node limits --why "导数的入口" --next "..."
+edu_dsh.py map --action position --topic net --node quic --mode branch --return-to tcp-handshake
 edu_dsh.py map --action drop     --topic calculus [--node limits]
 edu_dsh.py map --action show     [--topic calculus] [--json]
 
@@ -253,7 +275,7 @@ python <skill-dir>/scripts/edu_dsh.py doctor
 红线一票否决：`local` 联网、编造来源、未经同意存原话、评分/排名/打卡、机械任务、把 AI 输出当验证、把地图当进度条、用“规定如此 / 考试要考”解释约定、用户说停还追问、传播 neuromyth。
 
 ```bash
-python tests/selftest.py     # 80 项：同意门槛、编号、备份、导出、地图、好奇心字段
+python tests/selftest.py     # 93 项：同意门槛、编号、备份、导出、地图、状态机、好奇心字段
 ```
 
 ## 十、文件
@@ -263,10 +285,10 @@ edu-dsh/
 ├── SKILL.md                 # 入口：目标、不变量、动作、地图、求知欲、自检
 ├── references/
 │   ├── learning.md          # 人怎么学 + 认知外包 + 信息缺口
-│   ├── moves.md             # 12 张动作卡
+│   ├── moves.md             # 13 张动作卡
 │   ├── practice-loop.md     # 入境→动手→看见→命名→再用
 │   ├── state.md             # 工作区、命令、同意、降级
-│   ├── examples.md          # 6 个好对话 + 4 个坏对话
+│   ├── examples.md          # 8 个好对话 + 5 个坏对话
 │   ├── ai-collab.md         # 委派、验证、保留
 │   ├── knowledge-map.md     # 地图的粒度、co-create、反模式
 │   ├── curiosity.md         # 信号、喂养、杀手、收尾
@@ -290,7 +312,8 @@ edu-dsh/
 | 规则就是这样 | 规则是答案：还原问题、备选与代价 | 不把约定当权威；练批判与创新 |
 | 强制理论大纲 | 知识地图：co-create、可改、不显示进度 | 地图是导航，不是课表 |
 | 只看能力 | 能力 + 求知欲，冲突时先保护兴趣 | 学完还想学，比学完更重要 |
-| 5 个模式文件 + 7 个教学法文件 | 1 张路由表 + 12 张动作卡 + 3 份专题 | 判断力靠示例和判据 |
+| 5 个模式文件 + 7 个教学法文件 | 1 张路由表 + 13 张动作卡 + 3 份专题 | 判断力靠示例和判据 |
+| 跟着跑题 / 拦着不让问 | 每轮状态行 + 一句话 + 主线书签 | 方向要稳，好奇不掐 |
 | 1961 行 CLI + BM25 索引 | 单文件 CLI，无索引 | 记忆要的是“记住这个人” |
 
 ## 十二、限制

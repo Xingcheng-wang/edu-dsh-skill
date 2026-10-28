@@ -52,8 +52,12 @@ python scripts/edu_dsh.py map --home <EDU_HOME> --action add --topic calculus --
 python scripts/edu_dsh.py map --home <EDU_HOME> --action link --topic calculus --from functions --to limits --rel prereq --consent outline
 python scripts/edu_dsh.py map --home <EDU_HOME> --action status --topic calculus --node limits --status practicing --consent outline
 python scripts/edu_dsh.py map --home <EDU_HOME> --action position --topic calculus --node limits --why "导数的入口" --next "用 epsilon-N 说清楚" --consent outline
+python scripts/edu_dsh.py map --home <EDU_HOME> --action position --topic calculus --node quic --mode branch --return-to tcp-handshake --consent outline
 python scripts/edu_dsh.py map --home <EDU_HOME> --action drop --topic calculus --node limits --consent outline
 python scripts/edu_dsh.py map --home <EDU_HOME> --action show [--topic calculus] [--json]
+
+# 临时岔路：--mode branch|review + --return-to <主线>；回主线时不带 return-to
+# map.md 会显示“你在这里：X（临时 · 分支）／主线：Y”
 
 # 写学习状态（都要带 --consent）
 python scripts/edu_dsh.py goal     --home <EDU_HOME> --consent outline --add "做出一个能跑的心跳灯"

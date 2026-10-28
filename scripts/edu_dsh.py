@@ -20,7 +20,7 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.9.1"
+VERSION = "0.10.0"
 MIN_PYTHON = (3, 10)
 
 CONSENT_LEVELS = ("off", "outline", "verbatim")
@@ -31,6 +31,7 @@ MAP_STATUSES = ("unseen", "touched", "practicing", "can-do")
 MAP_KINDS = ("concept", "skill", "method", "problem")
 MAP_ROLES = ("trunk", "branch")
 MAP_RELATIONS = ("prereq", "part-of", "contrast")
+MAP_MODES = ("mainline", "branch", "review")
 MAP_MARKS = {"can-do": "[x]", "practicing": "[~]", "touched": "[.]", "unseen": "[ ]"}
 
 DEFAULT_CONFIG = {
@@ -323,6 +324,27 @@ def load_maps(home: Path) -> dict:
         m["edges"] = edges
         if not isinstance(m.get("position"), dict):
             m["position"] = {}
+        pos = m["position"]
+        node_ids = {n["id"] for n in nodes}
+        if not pos.get("node") or pos.get("node") not in node_ids:
+            m["position"] = {}
+        else:
+            mode = pos.get("mode") or "mainline"
+            if mode not in MAP_MODES:
+                mode = "mainline"
+            ret = pos.get("return_to") or ""
+            if mode in ("branch", "review"):
+                if not ret or ret == pos["node"] or ret not in node_ids:
+                    mode = "mainline"
+                    ret = ""
+            else:
+                mode = "mainline"
+                ret = ""
+            pos["mode"] = mode
+            if ret:
+                pos["return_to"] = ret
+            else:
+                pos.pop("return_to", None)
         clean.append(m)
     data["maps"] = clean
     data["version"] = 1
@@ -359,7 +381,8 @@ def _downstream(m: dict, node_id: str) -> list:
 
 
 def _tree_lines(m: dict, node_ids: list, children: dict, pos_node: str,
-                depth: int = 0, seen: set | None = None) -> list:
+                depth: int = 0, seen: set | None = None,
+                bookmark_node: str = "") -> list:
     if seen is None:
         seen = set()
     lines = []
@@ -369,13 +392,19 @@ def _tree_lines(m: dict, node_ids: list, children: dict, pos_node: str,
         seen.add(node_id)
         node = _find_node(m, node_id)
         mark = MAP_MARKS.get(node.get("status", "unseen"), "[ ]")
-        here = "   ← 你在这里" if node_id == pos_node else ""
+        tags = []
+        if node_id == pos_node:
+            tags.append("你在这里")
+        if bookmark_node and node_id == bookmark_node and node_id != pos_node:
+            tags.append("主线")
+        here = ("   ← " + " · ".join(tags)) if tags else ""
         note = ("  —— " + node["note"]) if node.get("note") else ""
         lines.append("%s%s %s%s%s" % ("  " * depth, mark,
                                       node.get("title") or node_id, note, here))
         kids = [kid for kid in children.get(node_id, []) if _find_node(m, kid)]
         if kids:
-            lines.extend(_tree_lines(m, kids, children, pos_node, depth + 1, seen))
+            lines.extend(_tree_lines(m, kids, children, pos_node, depth + 1, seen,
+                                     bookmark_node))
     return lines
 
 
@@ -388,9 +417,19 @@ def render_map_text(data: dict, state: dict) -> str:
             lines += ["方向：%s" % m["goal"], ""]
         pos = m.get("position") or {}
         pos_node = pos.get("node") or ""
+        pos_mode = pos.get("mode") or "mainline"
+        return_to = pos.get("return_to") or ""
         if pos_node:
+            mode_label = ""
+            if pos_mode == "branch":
+                mode_label = "（临时 · 分支）"
+            elif pos_mode == "review":
+                mode_label = "（临时 · 回头）"
             why = (" —— " + pos["why"]) if pos.get("why") else ""
-            lines.append("你在这里：%s%s" % (_node_title(m, pos_node), why))
+            lines.append("你在这里：%s%s%s" % (_node_title(m, pos_node),
+                                              mode_label, why))
+            if return_to:
+                lines.append("主线：%s" % _node_title(m, return_to))
             ups = _upstream(m, pos_node)
             downs = _downstream(m, pos_node)
             lines.append("上游：%s" % ("、".join(_node_title(m, u) for u in ups) or "（无）"))
@@ -409,7 +448,8 @@ def render_map_text(data: dict, state: dict) -> str:
         if not roots:
             roots = [n["id"] for n in nodes if n.get("role") == "trunk"]
         lines += ["## 主干", ""]
-        tree = _tree_lines(m, roots, children, pos_node) if roots else []
+        tree = _tree_lines(m, roots, children, pos_node,
+                           bookmark_node=return_to) if roots else []
         if tree:
             lines += tree
         else:
@@ -422,7 +462,12 @@ def render_map_text(data: dict, state: dict) -> str:
             lines += ["## 侧枝 / 对照", ""]
             for node in branches:
                 mark = MAP_MARKS.get(node.get("status", "unseen"), "[ ]")
-                here = "   ← 你在这里" if node["id"] == pos_node else ""
+                tags = []
+                if node["id"] == pos_node:
+                    tags.append("你在这里")
+                if return_to and node["id"] == return_to and node["id"] != pos_node:
+                    tags.append("主线")
+                here = ("   ← " + " · ".join(tags)) if tags else ""
                 lines.append("- %s %s%s" % (mark, node.get("title") or node["id"], here))
             for edge in contrasts:
                 lines.append("- %s ↔ %s" % (_node_title(m, edge["from"]),
@@ -557,10 +602,28 @@ def cmd_map(args) -> int:
             raise SystemExit("map position needs --node")
         if _find_node(m, args.node) is None:
             raise SystemExit("node not found: %s" % args.node)
-        m["position"] = {"node": args.node, "why": args.why or "", "next": args.next or ""}
+        mode = args.mode
+        return_to = args.return_to or ""
+        if mode is None:
+            mode = "branch" if return_to else "mainline"
+        if mode == "mainline" and return_to:
+            raise SystemExit("mainline position does not take --return-to")
+        if mode in ("branch", "review"):
+            if not return_to:
+                raise SystemExit("map position --mode %s needs --return-to" % mode)
+            if return_to == args.node:
+                raise SystemExit("--return-to must differ from --node")
+            if _find_node(m, return_to) is None:
+                raise SystemExit("return-to node not found: %s" % return_to)
+        position = {"node": args.node, "mode": mode,
+                    "why": args.why or "", "next": args.next or ""}
+        if return_to:
+            position["return_to"] = return_to
+        m["position"] = position
         save_maps(home, data)
         write_map_file(home, data, load_state(home))
-        print("position: %s" % args.node)
+        suffix = "" if mode == "mainline" else " (%s)" % mode
+        print("position: %s%s" % (args.node, suffix))
         return 0
 
     if action == "drop":
@@ -571,8 +634,13 @@ def cmd_map(args) -> int:
             m["nodes"] = [n for n in m["nodes"] if n["id"] != args.node]
             m["edges"] = [e for e in m["edges"]
                           if e["from"] != args.node and e["to"] != args.node]
-            if (m.get("position") or {}).get("node") == args.node:
+            pos = m.get("position") or {}
+            if pos.get("node") == args.node:
                 m["position"] = {}
+            elif pos.get("return_to") == args.node:
+                pos.pop("return_to", None)
+                pos["mode"] = "mainline"
+                m["position"] = pos
             message = "node removed: %s" % args.node
         else:
             data["maps"] = [item for item in data["maps"] if item["id"] != args.topic]
@@ -673,8 +741,15 @@ def cmd_state(args) -> int:
             if node:
                 ups = _upstream(m, node)
                 downs = _downstream(m, node)
-                print("  %s → %s（上：%s；下：%s）" % (
-                    m.get("title") or m.get("id"), _node_title(m, node),
+                mode = pos.get("mode") or "mainline"
+                ret = pos.get("return_to") or ""
+                tag = ""
+                if mode in ("branch", "review") and ret:
+                    tag = "（%s；主线 %s）" % (
+                        "分支" if mode == "branch" else "回头",
+                        _node_title(m, ret))
+                print("  %s → %s%s（上：%s；下：%s）" % (
+                    m.get("title") or m.get("id"), _node_title(m, node), tag,
                     "、".join(_node_title(m, u) for u in ups) or "无",
                     "、".join(_node_title(m, d) for d in downs) or "无"))
             else:
@@ -1197,6 +1272,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--status", default=None, choices=MAP_STATUSES)
     p.add_argument("--why", default=None)
     p.add_argument("--next", default=None)
+    p.add_argument("--mode", default=None, choices=MAP_MODES)
+    p.add_argument("--return-to", dest="return_to", default=None,
+                   help="mainline node id when position is a temporary branch/review")
     p.add_argument("--note", default=None,
                    help="what problem this node answers (optional)")
     p.add_argument("--json", action="store_true")

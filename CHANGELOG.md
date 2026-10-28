@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.0 — 2026-10-28
+
+**学习状态机：稳步、深入、分支、回头。**
+
+- 每轮第一行一行学习状态；无偏移也显示“稳步推进中”。
+- 分支/回头：一句话 + 三选项（继续 / 记下 / 回主线）；不阻拦、不说教。
+- 地图新增 `position.mode` / `return_to`；`map position --mode branch|review --return-to` 保留主线书签；回主线自动清除。
+- 新增 SKILL 4.9、`knowledge-map.md` 7.5、moves 卡 13；examples 好 7/8、坏 5；eval 4.12；state/README 同步。
+- 93 项测试。
+
 ## 0.9.1 — 2026-10-28
 
 **历史细节：宁缺勿编。**
