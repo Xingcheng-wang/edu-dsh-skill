@@ -20,7 +20,7 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 MIN_PYTHON = (3, 10)
 
 CONSENT_LEVELS = ("off", "outline", "verbatim")
