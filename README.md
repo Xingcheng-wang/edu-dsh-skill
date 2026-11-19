@@ -3,9 +3,9 @@
 > 把对话变成“一位懂认知规律的老师教一个具体的人”。
 > 目标是让他**更会**，也**更想学**；两者冲突时，先保护想学。
 
-- 版本：0.14.0
+- 版本：0.15.0
 - 运行环境：Python 3.10+，仅标准库
-- 形态：Agent Skill（`SKILL.md` + 15 份参考 + 1 个本地 CLI + 冒烟测试）
+- 形态：Agent Skill（`SKILL.md` + 16 份参考 + 1 个本地 CLI + 冒烟测试）
 - 许可：MIT
 
 ---
@@ -228,6 +228,21 @@
 
 细节、状态机图和例子见 [`references/blindspots.md`](references/blindspots.md)。
 
+### 4.13 知识库（SQLite，并行 MVP，可选）
+
+不是每个会话都必须用；用户明确要长期知识库、跨主线查询、复习调度时再开。
+
+- **文件**：`learner/knowledge.db`；`kb show` 生成 `learner/knowledge.md` 视图。
+- **一个知识项，多个事件**：盲区声明、第一次飞跃、第二次飞跃、复习都是 `events`。
+- **五维分类**：学科（至少一个）/ 领域路径 / 类型（事实/概念/原理/程序/方法/元认知）/ 粒度（原子/组合/元）/ 阶段（未实践/感性/理性/实践检验/反复检验）。
+- **命令**：`kb --action init|import|add|list|show|review|due|link|export`；写操作带 `--consent`。
+- **复习**：`pass` 只有 `practiced → consolidated`，其他阶段不变；`fail` 回退一级；`due` 查到期。
+- **并行**：旧 `progress` / `blindspot` 仍写 JSONL；`kb import` 一次性导入；不要双写。
+- **边界**：不自动迁移；地图暂不导入；`forget --session` 暂不同步 DB；`forget --all` 会删 DB。
+- **状态机**：`kb` 用认识论循环（未实践→感性→理性→实践→反复）；旧 `blindspot` 仍是 v0.14 的线性五态，v0.16 统一。
+
+细节、schema 和导入映射见 [`references/knowledge-db.md`](references/knowledge-db.md)。
+
 ## 五、时代提示（克制）
 
 有些事现在还没发生，但值得他心里有数。只在相关时提一句，不展开成课。
@@ -253,7 +268,9 @@
 │   ├── progress.jsonl   # 认知进步：上下文 + 两次飞跃 + 证据
 │   ├── 微积分（学习主线）进步记录.md   # 生成的进步笔记（按主线命名）
 │   ├── blindspots.jsonl # 知识盲区：颗粒度、状态、关联进步
-│   └── 微积分（主线）知识盲区.md       # 生成的盲区笔记（按主线命名）
+│   ├── 微积分（主线）知识盲区.md       # 生成的盲区笔记（按主线命名）
+│   ├── knowledge.db     # SQLite 知识库（并行 MVP）
+│   └── knowledge.md     # 生成的全局知识库视图
 ├── map.md               # 人可读的知识地图（脚本生成）
 ├── notes/               # 长笔记、网页缓存
 ├── sessions/NNNN-YYYY-MM-DD-topic.md
@@ -295,6 +312,18 @@ edu_dsh.py blindspot --action status --id bs-0001 --status noticed|unknown|verif
 edu_dsh.py blindspot --action resolve --id bs-0001 --leap first|second \
                       --context "..." --summary "..." --consent outline
 edu_dsh.py blindspot --action drop --id bs-0001 --consent outline
+
+# SQLite 知识库（并行 MVP）
+edu_dsh.py kb --action init
+edu_dsh.py kb --action import --discipline math --consent outline
+edu_dsh.py kb --action add --title "..." --discipline cs --domain networking/transport \
+                      --type principle --granularity atom --state perceptual --consent outline
+edu_dsh.py kb --action list [--discipline cs] [--type principle] [--state rational] [--due] [--json]
+edu_dsh.py kb --action show
+edu_dsh.py kb --action review --id k-0001 --result pass|fail --consent outline
+edu_dsh.py kb --action due [--discipline math]
+edu_dsh.py kb --action link --from k-0001 --to k-0002 --rel prereq --consent outline
+edu_dsh.py kb --action export --to backup.json
 
 # 所有权
 edu_dsh.py export --to ~/edu-backup.zip
@@ -345,7 +374,7 @@ python <skill-dir>/scripts/edu_dsh.py doctor
 红线一票否决：`local` 联网、编造来源、未经同意存原话、评分/排名/打卡、机械任务、把 AI 输出当验证、把地图当进度条、用“规定如此 / 考试要考”解释约定、用户说停还追问、传播 neuromyth。
 
 ```bash
-python tests/selftest.py     # 140 项：同意门槛、编号、备份、导出、地图、状态机、进步、盲区
+python tests/selftest.py     # 157 项：同意门槛、编号、备份、导出、地图、状态机、进步、盲区、知识库
 ```
 
 ## 十、文件
@@ -367,6 +396,7 @@ edu-dsh/
 │   ├── terminology.md        # 术语/缩写/黑话：解释、确认、再默认使用
 │   ├── progress.md           # 认知进步：上下文、两次飞跃、字数限制
 │   ├── blindspots.md         # 知识盲区：五类颗粒度、状态机、转进步
+│   ├── knowledge-db.md       # SQLite 知识库：schema、分类、导入、复习
 │   ├── future.md            # 6 张时代提示卡
 │   └── eval.md              # 用户侧评测协议
 ├── scripts/edu_dsh.py       # 记忆、地图、同意、导出、遗忘
@@ -391,6 +421,7 @@ edu-dsh/
 | 代码只讲大意 / 相对路径 / 指代不明 | 逐行 + 绝对路径 + 名字或行号 | 读者要能对上每一行 |
 | 默认用户懂缩写 / 黑话 | 先解释 + 确认 + 再默认用简称 | 解释不等于确认 |
 | 盲区记完就忘 | 五类颗粒度 + 状态机 + resolve 转进步 | 盲区是知识债，要复习、要转化 |
+| 只有主线文档，没有全局查询 | 可选 `knowledge.db` + `kb` 命令 | 一个知识项、多个事件、五维分类、可复习 |
 | 进步只说“今天学了 X” | 上下文 + 两次飞跃 + 字数限制 | 具体到能复查，抽象到能迁移 |
 | 1961 行 CLI + BM25 索引 | 单文件 CLI，无索引 | 记忆要的是“记住这个人” |
 

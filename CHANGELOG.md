@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.15.0 — 2026-11-20
+
+**知识库（SQLite，并行 MVP）。**
+
+- 新增 `learner/knowledge.db`：`items / item_disciplines / events / reviews / links`；一个知识项多个事件。
+- 五维分类：学科（多值）/ 领域路径 / 类型（事实/概念/原理/程序/方法/元认知）/ 粒度（原子/组合/元）/ 阶段（未实践/感性/理性/实践检验/反复检验）。
+- `kb init|import|add|list|show|review|due|link|export`；`import` 从旧 JSONL 导入；不双写。
+- 复习调度：`pass` 只有 `practiced → consolidated`，`fail` 回退一级；`next_review` + `due`。
+- `kb show` 生成 `learner/knowledge.md`；`doctor` 显示条数；`export` / 备份包含 DB。
+- 新增 `references/knowledge-db.md`、SKILL 4.14；README 同步。
+- 旧 `blindspot` 仍是 v0.14 线性五态；v0.16 统一到认识论循环。
+- 157 项测试。
+
 ## 0.14.0 — 2026-11-20
 
 **知识盲区：五类颗粒度 + 认识论状态机 + 转成进步。**

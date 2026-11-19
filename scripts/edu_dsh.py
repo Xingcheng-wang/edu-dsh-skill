@@ -15,12 +15,13 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import sys
 import zipfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
-VERSION = "0.14.0"
+VERSION = "0.15.0"
 MIN_PYTHON = (3, 10)
 
 CONSENT_LEVELS = ("off", "outline", "verbatim")
@@ -55,6 +56,64 @@ BLINDSPOT_STATUS_LABELS = {
     "verified": "已确认",
 }
 BLINDSPOT_LIMITS = {"title": 80, "context": 160}
+KB_TYPES = ("fact", "concept", "principle", "procedure", "method", "meta")
+KB_TYPE_LABELS = {
+    "fact": "事实",
+    "concept": "概念",
+    "principle": "原理",
+    "procedure": "程序",
+    "method": "方法",
+    "meta": "元认知",
+}
+KB_GRANULARITIES = ("atom", "cluster", "meta")
+KB_GRANULARITY_LABELS = {"atom": "原子", "cluster": "组合", "meta": "元"}
+KB_STATES = ("unpracticed", "perceptual", "rational", "practiced", "consolidated")
+KB_STATE_LABELS = {
+    "unpracticed": "未实践",
+    "perceptual": "感性认识",
+    "rational": "理性认识",
+    "practiced": "实践检验",
+    "consolidated": "反复检验",
+}
+KB_RELATIONS = ("prereq", "part-of", "contrast", "application", "analogy")
+KB_RELATION_LABELS = {
+    "prereq": "先修",
+    "part-of": "组成",
+    "contrast": "对照",
+    "application": "应用",
+    "analogy": "类比",
+}
+KB_DISCIPLINES = ("math", "cs", "physics", "chemistry", "biology", "engineering",
+                  "language", "humanities", "social-science", "arts", "other")
+KB_DISCIPLINE_LABELS = {
+    "math": "数学",
+    "cs": "计算机",
+    "physics": "物理",
+    "chemistry": "化学",
+    "biology": "生物",
+    "engineering": "工程",
+    "language": "语言",
+    "humanities": "人文",
+    "social-science": "社科",
+    "arts": "艺术",
+    "other": "其他",
+}
+KB_DISCIPLINE_ALIASES = {
+    "数学": "math",
+    "计算机": "cs",
+    "编程": "cs",
+    "物理": "physics",
+    "化学": "chemistry",
+    "生物": "biology",
+    "工程": "engineering",
+    "语言": "language",
+    "人文": "humanities",
+    "社科": "social-science",
+    "艺术": "arts",
+    "其他": "other",
+}
+KB_INTERVALS = (1, 3, 7, 14, 30, 60, 120)
+KB_DB_VERSION = 1
 MAP_MARKS = {"can-do": "[x]", "practicing": "[~]", "touched": "[.]", "unseen": "[ ]"}
 
 DEFAULT_CONFIG = {
@@ -500,6 +559,343 @@ def save_blindspots(home: Path, records: list) -> None:
         encoding="utf-8", newline="\n")
 
 
+# ------------------------------------------------------------------ knowledge db (MVP)
+
+
+def kb_path(home: Path) -> Path:
+    return home / "learner" / "knowledge.db"
+
+
+def _kb_schema_sql() -> str:
+    types = ",".join("'%s'" % item for item in KB_TYPES)
+    grans = ",".join("'%s'" % item for item in KB_GRANULARITIES)
+    states = ",".join("'%s'" % item for item in KB_STATES)
+    rels = ",".join("'%s'" % item for item in KB_RELATIONS)
+    return """
+    CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS items (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        domain TEXT NOT NULL DEFAULT '',
+        type TEXT NOT NULL CHECK(type IN (%s)),
+        granularity TEXT NOT NULL CHECK(granularity IN (%s)),
+        state TEXT NOT NULL CHECK(state IN (%s)),
+        conditions TEXT NOT NULL DEFAULT '',
+        context TEXT NOT NULL DEFAULT '',
+        created TEXT NOT NULL,
+        updated TEXT NOT NULL,
+        last_reviewed TEXT NOT NULL DEFAULT '',
+        review_count INTEGER NOT NULL DEFAULT 0,
+        interval_days INTEGER NOT NULL DEFAULT 0,
+        ease REAL NOT NULL DEFAULT 2.5,
+        next_review TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS item_disciplines (
+        item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        discipline TEXT NOT NULL,
+        PRIMARY KEY (item_id, discipline)
+    );
+    CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        context TEXT NOT NULL DEFAULT '',
+        evidence TEXT NOT NULL DEFAULT '',
+        date TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        date TEXT NOT NULL,
+        result TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS links (
+        from_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        to_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+        rel TEXT NOT NULL CHECK(rel IN (%s)),
+        PRIMARY KEY (from_id, to_id, rel)
+    );
+    """ % (types, grans, states, rels)
+
+
+def kb_connect(home: Path) -> sqlite3.Connection:
+    kb_path(home).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(kb_path(home)))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def kb_init(home: Path) -> None:
+    conn = kb_connect(home)
+    try:
+        conn.executescript(_kb_schema_sql())
+        conn.execute(
+            "INSERT OR IGNORE INTO meta(key, value) VALUES('schema_version', ?)",
+            (str(KB_DB_VERSION),))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _kb_discipline(value: str) -> str:
+    raw = (value or "").strip().lower()
+    return KB_DISCIPLINE_ALIASES.get(raw, raw or "other")
+
+
+def _kb_next_id(conn: sqlite3.Connection) -> str:
+    highest = 0
+    for row in conn.execute("SELECT id FROM items WHERE id LIKE 'k-%'"):
+        match = re.match(r"k-(\d+)", row["id"])
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return "k-%04d" % (highest + 1)
+
+
+def _kb_add_item(conn, *, title, disciplines, domain, item_type, granularity,
+                 state, conditions="", context="", evidence="", date_str=None):
+    title = (title or "").strip()
+    if not title:
+        raise SystemExit("kb add needs --title")
+    if item_type not in KB_TYPES:
+        raise SystemExit("kb add needs --type %s" % "|".join(KB_TYPES))
+    if granularity not in KB_GRANULARITIES:
+        raise SystemExit("kb add needs --granularity %s" % "|".join(KB_GRANULARITIES))
+    if state not in KB_STATES:
+        raise SystemExit("kb add needs --state %s" % "|".join(KB_STATES))
+    names = [_kb_discipline(item) for item in (disciplines or ["other"])]
+    names = list(dict.fromkeys(name for name in names if name))
+    if not names:
+        names = ["other"]
+    date_str = date_str or today_str()
+    item_id = _kb_next_id(conn)
+    conn.execute(
+        "INSERT INTO items(id,title,domain,type,granularity,state,conditions,context,"
+        "created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (item_id, title, (domain or "").strip(), item_type, granularity, state,
+         (conditions or "").strip(), (context or "").strip(), date_str, date_str))
+    conn.executemany(
+        "INSERT INTO item_disciplines(item_id, discipline) VALUES(?,?)",
+        [(item_id, name) for name in names])
+    conn.execute(
+        "INSERT INTO events(item_id, kind, context, evidence, date) VALUES(?,?,?,?,?)",
+        (item_id, "added", (context or "").strip(), (evidence or "").strip(), date_str))
+    return item_id
+
+
+def _kb_query_items(conn, discipline=None, item_type=None, state=None,
+                    due=False, limit=50):
+    clauses = []
+    params = []
+    if discipline:
+        clauses.append("d.discipline = ?")
+        params.append(_kb_discipline(discipline))
+    if item_type:
+        clauses.append("i.type = ?")
+        params.append(item_type)
+    if state:
+        clauses.append("i.state = ?")
+        params.append(state)
+    if due:
+        clauses.append("i.next_review != '' AND i.next_review <= ?")
+        params.append(today_str())
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    sql = (
+        "SELECT i.*, GROUP_CONCAT(d.discipline) AS disciplines "
+        "FROM items i LEFT JOIN item_disciplines d ON d.item_id = i.id"
+        + where +
+        " GROUP BY i.id ORDER BY "
+        "CASE WHEN i.next_review = '' THEN 1 ELSE 0 END, i.next_review, i.id LIMIT ?")
+    params.append(int(limit or 50))
+    return [dict(row) for row in conn.execute(sql, params)]
+
+
+def _kb_show_text(rows: list) -> str:
+    lines = [
+        "# 知识库",
+        "",
+        "| 学科 | 领域 | 标题 | 类型 | 粒度 | 阶段 | 下次复习 |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for row in rows:
+        lines.append("| %s | %s | %s | %s | %s | %s | %s |" % (
+            row.get("disciplines") or "other",
+            row.get("domain") or "",
+            row.get("title") or "",
+            KB_TYPE_LABELS.get(row.get("type"), row.get("type")),
+            KB_GRANULARITY_LABELS.get(row.get("granularity"), row.get("granularity")),
+            KB_STATE_LABELS.get(row.get("state"), row.get("state")),
+            row.get("next_review") or "—",
+        ))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _kb_state_advance(state: str, result: str) -> str:
+    index = KB_STATES.index(state) if state in KB_STATES else 0
+    if result == "fail":
+        return KB_STATES[max(index - 1, 0)]
+    if state == "practiced":
+        return "consolidated"
+    return state
+
+
+def _kb_review_item(conn, item_id: str, result: str, note: str = "") -> dict:
+    row = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+    if row is None:
+        raise SystemExit("kb item not found: %s" % item_id)
+    if result not in ("pass", "fail"):
+        raise SystemExit("kb review needs --result pass|fail")
+    item = dict(row)
+    count = int(item.get("review_count", 0)) + 1
+    ease = float(item.get("ease", 2.5))
+    interval = int(item.get("interval_days", 0))
+    if result == "pass":
+        ease = min(3.0, ease + 0.1)
+        interval = 1 if interval <= 0 else min(180, max(1, round(interval * ease)))
+    else:
+        ease = max(1.3, ease - 0.2)
+        interval = 1
+    next_review = (date.today() + timedelta(days=interval)).isoformat()
+    new_state = _kb_state_advance(item.get("state", "unpracticed"), result)
+    conn.execute(
+        "UPDATE items SET state=?, updated=?, last_reviewed=?, review_count=?, "
+        "interval_days=?, ease=?, next_review=? WHERE id=?",
+        (new_state, today_str(), today_str(), count, interval, ease, next_review, item_id))
+    conn.execute(
+        "INSERT INTO reviews(item_id, date, result, note) VALUES(?,?,?,?)",
+        (item_id, today_str(), result, (note or "").strip()))
+    return {
+        "id": item_id,
+        "state": new_state,
+        "interval_days": interval,
+        "next_review": next_review,
+        "review_count": count,
+    }
+
+
+def _kb_export(conn, target: Path) -> dict:
+    data = {
+        "schema_version": KB_DB_VERSION,
+        "exported_at": today_str(),
+        "items": [dict(row) for row in conn.execute("SELECT * FROM items ORDER BY id")],
+        "disciplines": [dict(row) for row in conn.execute(
+            "SELECT * FROM item_disciplines ORDER BY item_id, discipline")],
+        "events": [dict(row) for row in conn.execute(
+            "SELECT * FROM events ORDER BY id")],
+        "reviews": [dict(row) for row in conn.execute(
+            "SELECT * FROM reviews ORDER BY id")],
+        "links": [dict(row) for row in conn.execute(
+            "SELECT * FROM links ORDER BY from_id, to_id, rel")],
+    }
+    target.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                      encoding="utf-8", newline="\n")
+    return data
+
+
+def kb_import(home: Path, default_discipline: str = "other", force: bool = False) -> dict:
+    kb_init(home)
+    conn = kb_connect(home)
+    try:
+        existing = conn.execute("SELECT COUNT(*) AS n FROM items").fetchone()["n"]
+        if existing and not force:
+            raise SystemExit("knowledge.db already has items; use --force to rebuild")
+        if force:
+            for table in ("links", "events", "reviews", "item_disciplines", "items"):
+                conn.execute("DELETE FROM %s" % table)
+
+        blindspots = load_blindspots(home)
+        progress = load_progress(home)
+        state_map = {
+            "unknown": "unpracticed",
+            "noticed": "unpracticed",
+            "explained": "rational",
+            "applied": "practiced",
+            "verified": "consolidated",
+        }
+        kind_map = {
+            "concept": "concept",
+            "principle": "principle",
+            "skill": "procedure",
+            "method": "method",
+            "boundary": "concept",
+        }
+        imported = {"items": 0, "events": 0, "reviews": 0, "links": 0}
+        blind_ids = set()
+        for row in blindspots:
+            item_id = row.get("id") or _kb_next_id(conn)
+            title = row.get("title") or row.get("context") or item_id
+            item_type = kind_map.get(row.get("kind"), "concept")
+            state = state_map.get(row.get("status"), "unpracticed")
+            conn.execute(
+                "INSERT OR REPLACE INTO items(id,title,domain,type,granularity,state,"
+                "conditions,context,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (item_id, title, row.get("topic") or "", item_type, "atom", state,
+                 "边界/适用条件（导入时待补）" if row.get("kind") == "boundary" else "",
+                 row.get("context") or "", row.get("date") or today_str(),
+                 row.get("updated") or row.get("date") or today_str()))
+            conn.execute(
+                "INSERT OR IGNORE INTO item_disciplines(item_id, discipline) VALUES(?,?)",
+                (item_id, _kb_discipline(default_discipline)))
+            conn.execute(
+                "INSERT INTO events(item_id, kind, context, evidence, date) "
+                "VALUES(?,?,?,?,?)",
+                (item_id, "blindspot_declared", row.get("context") or "",
+                 "", row.get("date") or today_str()))
+            imported["items"] += 1
+            imported["events"] += 1
+            blind_ids.add(item_id)
+
+        for row in progress:
+            blindspot = row.get("blindspot") or ""
+            kind = "first_leap" if row.get("leap") == "first" else "second_leap"
+            if blindspot and blindspot in blind_ids:
+                conn.execute(
+                    "INSERT INTO events(item_id, kind, context, evidence, date) "
+                    "VALUES(?,?,?,?,?)",
+                    (blindspot, kind, row.get("context") or "",
+                     row.get("evidence") or "", row.get("date") or today_str()))
+                target = "rational" if kind == "first_leap" else "practiced"
+                current = conn.execute(
+                    "SELECT state FROM items WHERE id = ?", (blindspot,)).fetchone()["state"]
+                if KB_STATES.index(target) > KB_STATES.index(current):
+                    conn.execute(
+                        "UPDATE items SET state=?, updated=? WHERE id=?",
+                        (target, today_str(), blindspot))
+                imported["events"] += 1
+                continue
+            item_id = row.get("id") or _kb_next_id(conn)
+            state = "rational" if kind == "first_leap" else "practiced"
+            title = row.get("summary") or row.get("context") or item_id
+            conn.execute(
+                "INSERT OR REPLACE INTO items(id,title,domain,type,granularity,state,"
+                "conditions,context,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (item_id, title, row.get("topic") or "", "concept", "atom", state,
+                 "", row.get("context") or "", row.get("date") or today_str(),
+                 today_str()))
+            conn.execute(
+                "INSERT OR IGNORE INTO item_disciplines(item_id, discipline) VALUES(?,?)",
+                (item_id, _kb_discipline(default_discipline)))
+            conn.execute(
+                "INSERT INTO events(item_id, kind, context, evidence, date) "
+                "VALUES(?,?,?,?,?)",
+                (item_id, kind, row.get("context") or "",
+                 row.get("evidence") or "", row.get("date") or today_str()))
+            imported["items"] += 1
+            imported["events"] += 1
+
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES('imported_at', ?)",
+            (today_str(),))
+        conn.commit()
+        return imported
+    finally:
+        conn.close()
+
+
 # ------------------------------------------------------------------ knowledge map
 
 
@@ -932,6 +1328,14 @@ def cmd_doctor(args) -> int:
         len(maps), sum(len(m.get("nodes") or []) for m in maps)))
     print("progress : %d record(s)" % len(load_progress(home)))
     print("blindspots: %d record(s)" % len(load_blindspots(home)))
+    if kb_path(home).exists():
+        try:
+            conn = kb_connect(home)
+            count = conn.execute("SELECT COUNT(*) AS n FROM items").fetchone()["n"]
+            conn.close()
+            print("kb       : %d item(s)" % count)
+        except sqlite3.Error:
+            print("kb       : needs repair")
     return 0
 
 
@@ -1557,6 +1961,112 @@ def cmd_blindspot(args) -> int:
     raise SystemExit("unknown blindspot action: %s" % args.action)
 
 
+def cmd_kb(args) -> int:
+    home = ensure_home(home_of(args))
+    action = args.action
+
+    if action == "init":
+        kb_init(home)
+        print("knowledge.db ready: %s" % kb_path(home))
+        return 0
+
+    if action == "import":
+        if not require_consent(args, "kb import"):
+            return 0
+        discipline = (args.discipline or ["other"])[0]
+        result = kb_import(home, default_discipline=discipline, force=args.force)
+        print("imported: %d item(s), %d event(s)" % (
+            result.get("items", 0), result.get("events", 0)))
+        return 0
+
+    if not kb_path(home).exists():
+        kb_init(home)
+    conn = kb_connect(home)
+    try:
+        if action == "add":
+            if not require_consent(args, "kb add"):
+                return 0
+            if not args.discipline:
+                raise SystemExit(
+                    "kb add needs --discipline (math|cs|...; ask the user if unsure)")
+            item_id = _kb_add_item(
+                conn, title=args.title, disciplines=args.discipline,
+                domain=args.domain, item_type=args.kb_type,
+                granularity=args.granularity, state=args.state or "unpracticed",
+                conditions=args.conditions, context=args.context,
+                evidence=args.evidence)
+            conn.commit()
+            print("kb item added: %s" % item_id)
+            return 0
+
+        if action in ("list", "due"):
+            discipline = args.discipline[0] if args.discipline else None
+            rows = _kb_query_items(
+                conn, discipline=discipline, item_type=args.kb_type,
+                state=args.state, due=(args.due or action == "due"),
+                limit=args.limit)
+            if args.json:
+                print_json(rows)
+                return 0
+            if not rows:
+                print("kb: (none)")
+                return 0
+            for row in rows:
+                print("[%s] %s %s/%s · %s · %s%s" % (
+                    KB_STATE_LABELS.get(row["state"], row["state"]), row["id"],
+                    KB_TYPE_LABELS.get(row["type"], row["type"]),
+                    KB_GRANULARITY_LABELS.get(row["granularity"], row["granularity"]),
+                    row.get("disciplines") or "other", row["title"],
+                    (" · due %s" % row["next_review"]) if row.get("next_review") else ""))
+            return 0
+
+        if action == "show":
+            rows = _kb_query_items(conn, limit=100000)
+            text = _kb_show_text(rows)
+            path = home / "learner" / "knowledge.md"
+            path.write_text(text, encoding="utf-8", newline="\n")
+            print("knowledge view: %s" % path)
+            return 0
+
+        if action == "review":
+            if not require_consent(args, "kb review"):
+                return 0
+            result = _kb_review_item(conn, args.id or "", args.result or "",
+                                     args.note or "")
+            conn.commit()
+            print("kb review: %s -> %s, next %s" % (
+                result["id"], result["state"], result["next_review"]))
+            return 0
+
+        if action == "link":
+            if not require_consent(args, "kb link"):
+                return 0
+            if not args.from_id or not args.to or args.rel not in KB_RELATIONS:
+                raise SystemExit(
+                    "kb link needs --from, --to and --rel %s" % "|".join(KB_RELATIONS))
+            for item_id in (args.from_id, args.to):
+                if conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
+                    raise SystemExit("kb item not found: %s" % item_id)
+            conn.execute(
+                "INSERT OR IGNORE INTO links(from_id, to_id, rel) VALUES(?,?,?)",
+                (args.from_id, args.to, args.rel))
+            conn.commit()
+            print("kb link: %s -%s-> %s" % (args.from_id, args.rel, args.to))
+            return 0
+
+        if action == "export":
+            if not args.to:
+                raise SystemExit("kb export needs --to <file.json>")
+            target = Path(args.to).expanduser()
+            _kb_export(conn, target)
+            print("kb exported: %s" % target)
+            return 0
+    finally:
+        conn.close()
+
+    raise SystemExit("unknown kb action: %s" % action)
+
+
 def cmd_export(args) -> int:
     home = ensure_home(home_of(args))
     target = Path(args.to).expanduser()
@@ -1882,6 +2392,33 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     add_consent(p)
     p.set_defaults(func=cmd_blindspot)
+
+    p = sub.add_parser("kb", help="SQLite knowledge base (parallel MVP)")
+    add_home(p)
+    p.add_argument("--action", required=True,
+                   choices=("init", "import", "add", "list", "show", "review",
+                            "due", "link", "export"))
+    p.add_argument("--id", default=None)
+    p.add_argument("--title", default=None)
+    p.add_argument("--discipline", action="append", default=[])
+    p.add_argument("--domain", default="")
+    p.add_argument("--type", dest="kb_type", default=None, choices=KB_TYPES)
+    p.add_argument("--granularity", default=None, choices=KB_GRANULARITIES)
+    p.add_argument("--state", default=None, choices=KB_STATES)
+    p.add_argument("--conditions", default="")
+    p.add_argument("--context", default="")
+    p.add_argument("--evidence", default="")
+    p.add_argument("--result", default=None, choices=("pass", "fail"))
+    p.add_argument("--note", default="")
+    p.add_argument("--from", dest="from_id", default=None)
+    p.add_argument("--to", dest="to", default=None)
+    p.add_argument("--rel", default=None, choices=KB_RELATIONS)
+    p.add_argument("--due", action="store_true")
+    p.add_argument("--force", action="store_true")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--json", action="store_true")
+    add_consent(p)
+    p.set_defaults(func=cmd_kb)
 
     p = sub.add_parser("export", help="export learning data")
     add_home(p)

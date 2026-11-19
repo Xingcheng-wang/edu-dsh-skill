@@ -427,6 +427,64 @@ def main() -> int:
         check("state shows blindspots",
               "blindspots" in out and "（主线）知识盲区.md" in out, out)
 
+        # knowledge.db MVP: import, add, filter, review, link, show, export
+        code, out, _ = run(home, "kb", "--action", "init")
+        check("kb init", code == 0 and "knowledge.db" in out, out)
+        code, out, _ = run(home, "kb", "--action", "import",
+                           "--discipline", "math", "--consent", "outline")
+        check("kb import", code == 0 and "imported:" in out, out)
+        code, out, _ = run(home, "kb", "--action", "list", "--json")
+        kb_rows = json.loads(out)
+        check("kb import items", len(kb_rows) == 3, kb_rows)
+        check("kb import blindspot",
+              any(row["id"] == "bs-0001" and row["state"] == "consolidated"
+                  for row in kb_rows), kb_rows)
+        code, out, _ = run(home, "kb", "--action", "add",
+                           "--title", "TCP 三次握手", "--discipline", "cs",
+                           "--domain", "networking/transport", "--type", "principle",
+                           "--granularity", "atom", "--state", "perceptual",
+                           "--context", "刚看完抓包", "--consent", "outline")
+        check("kb add", code == 0 and "k-0001" in out, out)
+        code, out, _ = run(home, "kb", "--action", "list", "--discipline", "cs")
+        check("kb discipline filter",
+              "TCP 三次握手" in out and "bs-0001" not in out, out)
+        code, out, _ = run(home, "kb", "--action", "add",
+                           "--title", "对偶空间", "--discipline", "math",
+                           "--type", "concept", "--granularity", "atom",
+                           "--state", "practiced", "--consent", "outline")
+        check("kb add practiced", code == 0 and "k-0002" in out, out)
+        code, out, _ = run(home, "kb", "--action", "review", "--id", "k-0002",
+                           "--result", "pass", "--consent", "outline")
+        check("kb review pass", code == 0 and "consolidated" in out, out)
+        code, out, _ = run(home, "kb", "--action", "list", "--state",
+                           "consolidated", "--json")
+        check("kb review state",
+              any(row["id"] == "k-0002" for row in json.loads(out)), out)
+        code, out, _ = run(home, "kb", "--action", "review", "--id", "k-0002",
+                           "--result", "fail", "--consent", "outline")
+        check("kb review fail", code == 0 and "practiced" in out, out)
+        code, out, _ = run(home, "kb", "--action", "link",
+                           "--from", "k-0001", "--to", "k-0002",
+                           "--rel", "prereq", "--consent", "outline")
+        check("kb link", code == 0 and "kb link" in out, out)
+        code, out, _ = run(home, "kb", "--action", "show")
+        check("kb show", code == 0 and "knowledge.md" in out, out)
+        code, out, _ = run(home, "kb", "--action", "due")
+        check("kb due", code == 0, out)
+        kb_export = root / "kb-export.json"
+        code, out, _ = run(home, "kb", "--action", "export", "--to", str(kb_export))
+        check("kb export", code == 0 and kb_export.exists(), out)
+        kb_data = json.loads(kb_export.read_text(encoding="utf-8"))
+        check("kb export links",
+              any(row["rel"] == "prereq" for row in kb_data["links"]),
+              kb_data["links"])
+        code, out, _ = run(home, "kb", "--action", "add", "--title", "x",
+                           "--discipline", "math", "--type", "concept",
+                           "--granularity", "atom", "--consent", "off")
+        check("kb off blocked", code == 0 and "not recorded" in out, out)
+        code, out, _ = run(home, "kb", "--action", "import", "--consent", "outline")
+        check("kb import needs force", code != 0, out)
+
         archive = root / "backup.zip"
         code, out, _ = run(home, "export", "--to", str(archive))
         check("export exits 0", code == 0 and archive.exists(), out)
