@@ -21,7 +21,7 @@ import zipfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-VERSION = "0.15.0"
+VERSION = "0.15.1"
 MIN_PYTHON = (3, 10)
 
 CONSENT_LEVELS = ("off", "outline", "verbatim")

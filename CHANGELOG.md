@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.15.1 — 2026-11-20
+
+**离线依赖：SQLite CLI + VS Code 扩展下载脚本。**
+
+- `vendor/sqlite/`：SQLite 3.54.1 Windows x64（`sqlite3.exe`、`sqlite3.dll`、`sqlite3.def`、`sqlite3.h`），Public Domain，含 SHA256/来源包 SHA3。
+- `vendor/vscode/`：SQLite Viewer 26.9.1 发布者条款**禁止再分发**，因此不提交 `.vsix`；提供下载/安装脚本，`.vsix` 已 gitignore。
+- `scripts/fetch-vscode-sqlite-viewer.ps1`、`scripts/install-vendor.ps1`；README 增加离线依赖章节。
+- 无 CLI 行为变更；157 项测试。
+
 ## 0.15.0 — 2026-11-20
 
 **知识库（SQLite，并行 MVP）。**

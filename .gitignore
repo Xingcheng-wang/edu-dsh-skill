@@ -5,3 +5,7 @@ __pycache__/
 .venv/
 .DS_Store
 Thumbs.db
+
+# The SQLite Viewer extension license forbids redistribution;
+# fetch it locally with scripts/fetch-vscode-sqlite-viewer.ps1.
+vendor/vscode/*.vsix

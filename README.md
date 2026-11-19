@@ -3,7 +3,7 @@
 > 把对话变成“一位懂认知规律的老师教一个具体的人”。
 > 目标是让他**更会**，也**更想学**；两者冲突时，先保护想学。
 
-- 版本：0.15.0
+- 版本：0.15.1
 - 运行环境：Python 3.10+，仅标准库
 - 形态：Agent Skill（`SKILL.md` + 16 份参考 + 1 个本地 CLI + 冒烟测试）
 - 许可：MIT
@@ -399,8 +399,15 @@ edu-dsh/
 │   ├── knowledge-db.md       # SQLite 知识库：schema、分类、导入、复习
 │   ├── future.md            # 6 张时代提示卡
 │   └── eval.md              # 用户侧评测协议
-├── scripts/edu_dsh.py       # 记忆、地图、同意、导出、遗忘
-└── tests/selftest.py        # 端到端冒烟
+├── scripts/
+│   ├── edu_dsh.py                    # 记忆、地图、同意、导出、遗忘
+│   ├── fetch-vscode-sqlite-viewer.ps1 # 联网下载 VSIX（不提交）
+│   └── install-vendor.ps1            # 安装离线 SQLite / VSIX
+├── tests/selftest.py                 # 端到端冒烟
+└── vendor/
+    ├── README.md                     # 离线依赖说明
+    ├── sqlite/                       # SQLite 3.54.1 win-x64（Public Domain）
+    └── vscode/README.md              # SQLite Viewer 下载/安装说明
 ```
 
 ## 十一、和上一版（education-mode v0.8）的区别
@@ -435,6 +442,20 @@ edu-dsh/
 - 地图需要模型现场提出好草案；提得差，用户可以改，但不保证每次都准。
 - 求知欲只做行为记录与评审，不能量化成指标；任何“好奇心分数”都是异化。
 - 教学不能被完全自动化。这个 skill 是脚手架，不是流水线。
+
+## 十三、离线依赖（vendor/）
+
+- **SQLite 3.54.1（Windows x64）**：`vendor/sqlite/`，含 `sqlite3.exe`、`sqlite3.dll`、`sqlite3.def`、`sqlite3.h`，Public Domain，可直接离线打开 `knowledge.db`。
+- **VS Code SQLite Viewer 26.9.1**：扩展发布者条款**禁止再分发**，所以仓库不提交 `.vsix`；提供：
+  - `scripts/fetch-vscode-sqlite-viewer.ps1`：联网机器下载 VSIX 到 `vendor/vscode/`（已 gitignore）；
+  - `scripts/install-vendor.ps1 -InstallVsix`：离线机器安装。
+- 校验和见 `vendor/sqlite/SHA256SUMS.txt`；VSIX 下载后脚本会打印 SHA256。
+
+```powershell
+vendor\sqlite\sqlite3.exe C:\Users\root\.edu-dsh\learner\knowledge.db
+powershell -ExecutionPolicy Bypass -File scripts\fetch-vscode-sqlite-viewer.ps1
+powershell -ExecutionPolicy Bypass -File scripts\install-vendor.ps1 -InstallVsix
+```
 
 ## License
 

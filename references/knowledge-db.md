@@ -88,7 +88,13 @@ kb --action export --to backup.json
 - 所有导入项默认学科 `--discipline`（默认 `other`），可导入后改。
 - 地图节点暂不导入；v0.16 再做。
 
-## 7. 边界
+## 7. 离线依赖
+
+- **SQLite CLI**：`vendor/sqlite/sqlite3.exe`（3.54.1，Windows x64，Public Domain），可直接打开 `knowledge.db`；哈希见 `vendor/sqlite/SHA256SUMS.txt`。
+- **VS Code SQLite Viewer**：发布者条款禁止再分发，所以仓库不提交 `.vsix`；用 `scripts/fetch-vscode-sqlite-viewer.ps1` 下载，`scripts/install-vendor.ps1 -InstallVsix` 安装。
+- Python 标准库自带 `sqlite3`，不需要额外安装。
+
+## 8. 边界
 
 - 不自动迁移；必须显式 `kb import`。
 - 不替换旧命令；旧命令与 `kb` 不要双写。
@@ -97,13 +103,13 @@ kb --action export --to backup.json
 - SQLite 是二进制文件；用 `kb export` 备份为 JSON。
 - 不做 Web UI、不做 FSRS、不做自动评分。
 
-## 8. 下一步
+## 9. 下一步
 
 - v0.16：把 `progress` / `blindspot` 切到 SQLite 适配层，JSONL 只做导出；
 - 导入地图节点与先修关系；
 - `forget --session` 同步 DB；
 - 全局 `kb` 查询与画像视图。
 
-## 9. 一句话
+## 10. 一句话
 
 > 旧命令照常跑；新知识进 `knowledge.db`。一个知识项、多个事件、五维分类、可复习，不双写。
