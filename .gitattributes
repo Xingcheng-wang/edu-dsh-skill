@@ -1,3 +1,3 @@
-* text=auto eol=lf
-*.py text eol=lf
-*.md text eol=lf
+# Keep vendored SQLite binaries and Windows text files byte-for-byte.
+# sqlite3.def is CRLF; Git must not normalize it, or its SHA256 changes.
+vendor/sqlite/* -text

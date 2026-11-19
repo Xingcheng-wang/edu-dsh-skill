@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.2 — 2026-11-20
+
+**修复 `vendor/sqlite/sqlite3.def` 的换行归一化。**
+
+- `.gitattributes` 设 `vendor/sqlite/* -text`，保证 `.def` 的 CRLF 原样保存，SHA256 与 `SHA256SUMS.txt` 一致。
+- 无 CLI 行为变更；157 项测试。
+
 ## 0.15.1 — 2026-11-20
 
 **离线依赖：SQLite CLI + VS Code 扩展下载脚本。**
