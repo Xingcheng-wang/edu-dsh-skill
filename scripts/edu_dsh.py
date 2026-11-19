@@ -20,7 +20,7 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.12.0"
+VERSION = "0.13.0"
 MIN_PYTHON = (3, 10)
 
 CONSENT_LEVELS = ("off", "outline", "verbatim")
@@ -319,42 +319,62 @@ def _next_progress_id(rows: list) -> str:
     return "p-%04d" % (highest + 1)
 
 
-def render_progress_text(records: list) -> str:
-    lines = [
-        "# 认知进步",
-        "",
-        "> 每条：具体上下文 + 抽象概述（两次飞跃之一）+ 证据。",
-        "> 字数：上下文 ≤160，概述 ≤80，证据 ≤160。",
-        "",
-    ]
-    if not records:
-        lines += ["还没有记录。一次真正的进步，至少要有具体上下文和一句抽象概述。", ""]
-        return "\n".join(lines)
+def _safe_file_part(text: str) -> str:
+    cleaned = re.sub(r'[\\/:*?"<>|\r\n]+', "-", (text or "").strip())
+    cleaned = cleaned.strip(" .")
+    return cleaned or "学习"
 
-    for leap in PROGRESS_LEAPS:
-        group = [row for row in records if row.get("leap") == leap]
-        if not group:
-            continue
-        lines += ["## %s" % PROGRESS_LABELS[leap], ""]
-        for row in group:
-            where = "session %s" % (row.get("session") or "?")
-            if row.get("topic") or row.get("node"):
-                where += " · " + "/".join(
-                    part for part in (row.get("topic"), row.get("node")) if part)
-            lines.append("### %s · %s" % (row.get("date") or "", where))
-            lines.append("- **上下文**：%s" % (row.get("context") or ""))
-            lines.append("- **概述**：%s" % (row.get("summary") or ""))
-            if row.get("evidence"):
-                lines.append("- **证据**：%s" % row["evidence"])
-            lines.append("")
+
+def _progress_title(home: Path, record: dict) -> str:
+    topic = (record.get("topic") or "").strip()
+    if not topic:
+        return "学习"
+    for m in load_maps(home).get("maps") or []:
+        if m.get("id") == topic:
+            return (m.get("title") or topic).strip()
+    return topic
+
+
+def progress_file_path(home: Path, record: dict) -> Path:
+    title = _safe_file_part(_progress_title(home, record))
+    return home / "learner" / ("%s（学习主线）进步记录.md" % title)
+
+
+def render_progress_file(records: list) -> str:
+    lines = []
+    for row in records:
+        label = "第一次飞跃" if row.get("leap") == "first" else "第二次飞跃"
+        lines.append("> %s · %s" % (row.get("date") or "", label))
+        lines.append("> 上下文：%s" % (row.get("context") or ""))
+        lines.append("> 概述：%s" % (row.get("summary") or ""))
+        if row.get("evidence"):
+            lines.append("> 证据：%s" % row["evidence"])
+        lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
-def write_progress_file(home: Path, records: list) -> str:
-    text = render_progress_text(records)
-    (home / "learner" / "progress.md").write_text(
-        text, encoding="utf-8", newline="\n")
-    return text
+def write_progress_files(home: Path, records: list) -> list:
+    groups = {}
+    for row in records:
+        path = progress_file_path(home, row)
+        groups.setdefault(path, []).append(row)
+
+    written = []
+    learner = home / "learner"
+    learner.mkdir(parents=True, exist_ok=True)
+    for path, rows in groups.items():
+        text = render_progress_file(rows)
+        path.write_text(text, encoding="utf-8", newline="\n")
+        written.append((path, text))
+
+    current = {path.name for path, _ in written}
+    for path in learner.glob("*（学习主线）进步记录.md"):
+        if path.name not in current:
+            path.unlink()
+    legacy = learner / "progress.md"
+    if legacy.exists():
+        legacy.unlink()
+    return written
 
 
 def _resolve_session(state: dict, value) -> str:
@@ -894,7 +914,7 @@ def cmd_state(args) -> int:
         label = "第一次飞跃" if last_progress.get("leap") == "first" else "第二次飞跃"
         print("progress    : %s · %s（%s）" % (
             label, last_progress.get("summary", ""), last_progress.get("date", "")))
-        print("              file: %s" % (home / "learner" / "progress.md"))
+        print("              file: %s" % progress_file_path(home, last_progress))
     else:
         print("progress    : (nothing recorded yet)")
     return 0
@@ -1193,11 +1213,20 @@ def cmd_progress(args) -> int:
 
     if args.action == "show":
         shown = records[-args.limit:] if args.limit and args.limit > 0 else records
-        write_progress_file(home, records)
+        write_progress_files(home, records)
         if args.json:
             print_json(shown)
-        else:
-            print(render_progress_text(shown).rstrip())
+            return 0
+        if not shown:
+            print("> 还没有记录。一次真正的进步，至少要有具体上下文和一句抽象概述。")
+            return 0
+        groups = {}
+        for row in shown:
+            groups.setdefault(progress_file_path(home, row), []).append(row)
+        for path, rows in groups.items():
+            print("> %s" % path)
+            print(render_progress_file(rows).rstrip())
+            print()
         return 0
 
     if not require_consent(args, "progress"):
@@ -1244,7 +1273,7 @@ def cmd_progress(args) -> int:
     with (home / "learner" / "progress.jsonl").open(
             "a", encoding="utf-8", newline="\n") as fh:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-    write_progress_file(home, records + [record])
+    write_progress_files(home, records + [record])
     print("progress recorded: %s (%s)" % (record["id"], leap))
     return 0
 
@@ -1331,7 +1360,7 @@ def cmd_forget(args) -> int:
         (home / "learner" / "progress.jsonl").write_text(
             "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in progress_rows),
             encoding="utf-8", newline="\n")
-        write_progress_file(home, progress_rows)
+        write_progress_files(home, progress_rows)
     else:
         for rel in ("learner", "sessions", "notes"):
             shutil.rmtree(home / rel, ignore_errors=True)

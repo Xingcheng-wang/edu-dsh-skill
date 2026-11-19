@@ -294,21 +294,29 @@ def main() -> int:
                            "--leap", "first",
                            "--summary", "第一次飞跃：从猜行为到能说出 try/except 的边界",
                            "--evidence", "D:\\work\\demo\\retry.py:6",
+                           "--topic", "calculus",
                            "--session", "0001", "--consent", "outline")
         check("progress add first", code == 0 and "progress recorded" in out, out)
         check("progress jsonl created", (home / "learner" / "progress.jsonl").exists())
+        check("progress note named by mainline",
+              (home / "learner" / "微积分（学习主线）进步记录.md").exists())
         code, out, _ = run(home, "progress", "--action", "add",
                            "--context", "他把异常处理改到真实上传脚本，先加幂等键再重试，避免重复扣款",
                            "--leap", "second",
                            "--summary", "从会解释重试边界到能把它用进真实上传动作",
+                           "--topic", "net",
                            "--session", "0002", "--consent", "outline")
         check("progress add second", code == 0 and "p-0002" in out, out)
+        check("progress second note named",
+              (home / "learner" / "net（学习主线）进步记录.md").exists())
         code, out, _ = run(home, "progress", "--action", "show")
         check("progress show both leaps",
               "第一次飞跃" in out and "第二次飞跃" in out, out)
         check("progress show context", "retry.py 第 6 行" in out, out)
         check("progress summary normalized",
               "第一次飞跃：第一次飞跃" not in out, out)
+        check("progress uses blockquotes, no headings",
+              "> 上下文：" in out and "# 认知进步" not in out, out)
         code, out, _ = run(home, "progress", "--action", "show", "--json")
         progress_rows = json.loads(out)
         check("progress json",
@@ -333,7 +341,8 @@ def main() -> int:
                          "--context", "x", "--summary", "y", "--consent", "outline")
         check("progress needs leap", code != 0)
         code, out, _ = run(home, "state")
-        check("state shows progress", "progress" in out and "第二次飞跃" in out, out)
+        check("state shows progress",
+              "progress" in out and "（学习主线）进步记录.md" in out, out)
 
         archive = root / "backup.zip"
         code, out, _ = run(home, "export", "--to", str(archive))
@@ -344,7 +353,8 @@ def main() -> int:
               and any(name.startswith("sessions/") for name in names), str(names))
         check("export map", "learner/map.json" in names and "map.md" in names, str(names))
         check("export progress",
-              "learner/progress.jsonl" in names and "learner/progress.md" in names,
+              "learner/progress.jsonl" in names
+              and any(name.endswith("（学习主线）进步记录.md") for name in names),
               str(names))
 
         # forget: dry-run, then apply, then numbering must not be reused
@@ -361,8 +371,10 @@ def main() -> int:
                      if line.strip()]
         check("forget removed progress rows",
               len(remaining) == 1 and remaining[0].get("leap") == "second", remaining)
-        check("forget rewrote progress md",
-              "retry.py" not in (home / "learner" / "progress.md").read_text(encoding="utf-8"))
+        check("forget removed empty progress note",
+              not (home / "learner" / "微积分（学习主线）进步记录.md").exists())
+        check("forget kept other progress note",
+              (home / "learner" / "net（学习主线）进步记录.md").exists())
 
         code, out, _ = run(home, "note", "--topic", "calculus/integral", "--summary", "下一轮",
                            "--consent", "outline")
@@ -393,7 +405,9 @@ def main() -> int:
         check("forget all reset map", maps["maps"] == [])
         check("forget all reset progress",
               (home / "learner" / "progress.jsonl").read_text(encoding="utf-8").strip() == "")
-        check("forget all removed progress md",
+        check("forget all removed progress notes",
+              not list((home / "learner").glob("*（学习主线）进步记录.md")))
+        check("forget all removed legacy progress md",
               not (home / "learner" / "progress.md").exists())
 
         # hand-written / legacy state must not crash (plain strings, int session ids)
