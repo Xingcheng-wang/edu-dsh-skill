@@ -20,7 +20,7 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.13.0"
+VERSION = "0.14.0"
 MIN_PYTHON = (3, 10)
 
 CONSENT_LEVELS = ("off", "outline", "verbatim")
@@ -38,6 +38,23 @@ PROGRESS_LABELS = {
     "first": "第一次飞跃（感性 → 理性）",
     "second": "第二次飞跃（理性 → 实践）",
 }
+BLINDSPOT_KINDS = ("concept", "principle", "skill", "method", "boundary")
+BLINDSPOT_STATUSES = ("unknown", "noticed", "explained", "applied", "verified")
+BLINDSPOT_KIND_LABELS = {
+    "concept": "概念",
+    "principle": "原理",
+    "skill": "技能",
+    "method": "方法",
+    "boundary": "边界",
+}
+BLINDSPOT_STATUS_LABELS = {
+    "unknown": "未识别",
+    "noticed": "已发现",
+    "explained": "能解释",
+    "applied": "能应用",
+    "verified": "已确认",
+}
+BLINDSPOT_LIMITS = {"title": 80, "context": 160}
 MAP_MARKS = {"can-do": "[x]", "practicing": "[~]", "touched": "[.]", "unseen": "[ ]"}
 
 DEFAULT_CONFIG = {
@@ -201,6 +218,10 @@ def ensure_home(home: Path, lang: str = "auto") -> Path:
     if not progress.exists():
         progress.write_text("", encoding="utf-8")
 
+    blindspots = home / "learner" / "blindspots.jsonl"
+    if not blindspots.exists():
+        blindspots.write_text("", encoding="utf-8")
+
     return home
 
 
@@ -349,6 +370,8 @@ def render_progress_file(records: list) -> str:
         lines.append("> 概述：%s" % (row.get("summary") or ""))
         if row.get("evidence"):
             lines.append("> 证据：%s" % row["evidence"])
+        if row.get("blindspot"):
+            lines.append("> 盲区：%s" % row["blindspot"])
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -381,6 +404,100 @@ def _resolve_session(state: dict, value) -> str:
     if not value or value in ("last", "latest"):
         return "%04d" % int(state.get("session_counter", 0))
     return _session_label(value)
+
+
+# ------------------------------------------------------------------ blind spots
+
+
+def load_blindspots(home: Path, limit: int | None = None) -> list:
+    path = home / "learner" / "blindspots.jsonl"
+    if not path.exists():
+        return []
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        row.setdefault("date", "")
+        row["session"] = _session_label(row.get("session"))
+        if row.get("kind") not in BLINDSPOT_KINDS:
+            row["kind"] = "concept"
+        if row.get("status") not in BLINDSPOT_STATUSES:
+            row["status"] = "noticed"
+        rows.append(row)
+    return rows[-limit:] if limit else rows
+
+
+def _next_blindspot_id(rows: list) -> str:
+    highest = 0
+    for row in rows:
+        match = re.match(r"bs-(\d+)", str(row.get("id", "")))
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return "bs-%04d" % (highest + 1)
+
+
+def _blindspot_title(home: Path, record: dict) -> str:
+    topic = (record.get("topic") or "").strip()
+    if not topic:
+        return "学习"
+    for m in load_maps(home).get("maps") or []:
+        if m.get("id") == topic:
+            return (m.get("title") or topic).strip()
+    return topic
+
+
+def blindspot_file_path(home: Path, record: dict) -> Path:
+    title = _safe_file_part(_blindspot_title(home, record))
+    return home / "learner" / ("%s（主线）知识盲区.md" % title)
+
+
+def render_blindspot_file(records: list) -> str:
+    lines = []
+    for row in records:
+        kind = BLINDSPOT_KIND_LABELS.get(row.get("kind"), "概念")
+        status = BLINDSPOT_STATUS_LABELS.get(row.get("status"), "已发现")
+        lines.append("> %s · %s · %s · %s" % (
+            row.get("date") or "", row.get("id") or "", kind, status))
+        lines.append("> 盲区：%s" % (row.get("title") or ""))
+        lines.append("> 上下文：%s" % (row.get("context") or ""))
+        if row.get("progress_id"):
+            lines.append("> 关联进步：%s" % row["progress_id"])
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_blindspot_files(home: Path, records: list) -> list:
+    groups = {}
+    for row in records:
+        path = blindspot_file_path(home, row)
+        groups.setdefault(path, []).append(row)
+
+    written = []
+    learner = home / "learner"
+    learner.mkdir(parents=True, exist_ok=True)
+    for path, rows in groups.items():
+        text = render_blindspot_file(rows)
+        path.write_text(text, encoding="utf-8", newline="\n")
+        written.append((path, text))
+
+    current = {path.name for path, _ in written}
+    for path in learner.glob("*（主线）知识盲区.md"):
+        if path.name not in current:
+            path.unlink()
+    return written
+
+
+def save_blindspots(home: Path, records: list) -> None:
+    (home / "learner" / "blindspots.jsonl").write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in records),
+        encoding="utf-8", newline="\n")
 
 
 # ------------------------------------------------------------------ knowledge map
@@ -814,6 +931,7 @@ def cmd_doctor(args) -> int:
     print("maps     : %d map(s), %d node(s)" % (
         len(maps), sum(len(m.get("nodes") or []) for m in maps)))
     print("progress : %d record(s)" % len(load_progress(home)))
+    print("blindspots: %d record(s)" % len(load_blindspots(home)))
     return 0
 
 
@@ -832,6 +950,7 @@ def cmd_state(args) -> int:
             "sessions": [p.name for p in sessions[-10:]],
             "recent_deltas": _read_deltas(home, 5),
             "progress": load_progress(home)[-5:],
+            "blindspots": load_blindspots(home)[-10:],
         })
         return 0
 
@@ -917,6 +1036,21 @@ def cmd_state(args) -> int:
         print("              file: %s" % progress_file_path(home, last_progress))
     else:
         print("progress    : (nothing recorded yet)")
+
+    blinds = load_blindspots(home)
+    if blinds:
+        open_rows = [row for row in blinds if row.get("status") != "verified"]
+        print("\nblindspots:")
+        for row in open_rows[:5]:
+            print("  [%s] %s %s %s" % (
+                BLINDSPOT_STATUS_LABELS.get(row.get("status"), "已发现"),
+                row.get("id"), BLINDSPOT_KIND_LABELS.get(row.get("kind"), "概念"),
+                row.get("title", "")))
+        if not open_rows:
+            print("  (all verified)")
+        print("  file: %s" % blindspot_file_path(home, blinds[-1]))
+    else:
+        print("\nblindspots: (none)")
     return 0
 
 
@@ -1207,6 +1341,55 @@ def cmd_delta(args) -> int:
     return 0
 
 
+def _add_progress_record(home: Path, *, context, summary, leap, evidence="",
+                         topic="", node="", session="last", blindspot=""):
+    context = (context or "").strip()
+    summary = (summary or "").strip()
+    for prefix in ("第一次飞跃：", "第一次飞跃:", "第二次飞跃：", "第二次飞跃:"):
+        if summary.startswith(prefix):
+            summary = summary[len(prefix):].strip()
+            break
+    if not context or not summary or leap not in PROGRESS_LEAPS:
+        raise SystemExit(
+            "progress add needs --context, --summary and --leap first|second")
+
+    for field, value in (("context", context), ("summary", summary)):
+        limit = PROGRESS_LIMITS[field]
+        if len(value) > limit:
+            raise SystemExit("progress --%s must be <= %d chars (got %d)" % (
+                field, limit, len(value)))
+
+    evidence = (evidence or "").strip()
+    if len(evidence) > PROGRESS_LIMITS["evidence"]:
+        raise SystemExit("progress --evidence must be <= %d chars (got %d)" % (
+            PROGRESS_LIMITS["evidence"], len(evidence)))
+
+    records = load_progress(home)
+    state = load_state(home)
+    record = {
+        "id": _next_progress_id(records),
+        "date": today_str(),
+        "session": _resolve_session(state, session),
+        "leap": leap,
+        "context": context,
+        "summary": summary,
+    }
+    if topic:
+        record["topic"] = topic.strip()
+    if node:
+        record["node"] = node.strip()
+    if evidence:
+        record["evidence"] = evidence
+    if blindspot:
+        record["blindspot"] = blindspot
+
+    with (home / "learner" / "progress.jsonl").open(
+            "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    write_progress_files(home, records + [record])
+    return record
+
+
 def cmd_progress(args) -> int:
     home = ensure_home(home_of(args))
     records = load_progress(home)
@@ -1232,50 +1415,146 @@ def cmd_progress(args) -> int:
     if not require_consent(args, "progress"):
         return 0
 
-    context = (args.context or "").strip()
-    summary = (args.summary or "").strip()
-    for prefix in ("第一次飞跃：", "第一次飞跃:", "第二次飞跃：", "第二次飞跃:"):
-        if summary.startswith(prefix):
-            summary = summary[len(prefix):].strip()
-            break
-    leap = args.leap
-    if not context or not summary or leap not in PROGRESS_LEAPS:
-        raise SystemExit(
-            "progress add needs --context, --summary and --leap first|second")
-
-    for field, value in (("context", context), ("summary", summary)):
-        limit = PROGRESS_LIMITS[field]
-        if len(value) > limit:
-            raise SystemExit("progress --%s must be <= %d chars (got %d)" % (
-                field, limit, len(value)))
-
-    evidence = (args.evidence or "").strip()
-    if len(evidence) > PROGRESS_LIMITS["evidence"]:
-        raise SystemExit("progress --evidence must be <= %d chars (got %d)" % (
-            PROGRESS_LIMITS["evidence"], len(evidence)))
-
-    state = load_state(home)
-    record = {
-        "id": _next_progress_id(records),
-        "date": today_str(),
-        "session": _resolve_session(state, args.session),
-        "leap": leap,
-        "context": context,
-        "summary": summary,
-    }
-    if args.topic:
-        record["topic"] = args.topic.strip()
-    if args.node:
-        record["node"] = args.node.strip()
-    if evidence:
-        record["evidence"] = evidence
-
-    with (home / "learner" / "progress.jsonl").open(
-            "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-    write_progress_files(home, records + [record])
-    print("progress recorded: %s (%s)" % (record["id"], leap))
+    record = _add_progress_record(
+        home, context=args.context, summary=args.summary, leap=args.leap,
+        evidence=args.evidence or "", topic=args.topic or "",
+        node=args.node or "", session=args.session)
+    print("progress recorded: %s (%s)" % (record["id"], record["leap"]))
     return 0
+
+
+def _find_blindspot(records: list, blindspot_id: str):
+    return next((row for row in records if row.get("id") == blindspot_id), None)
+
+
+def cmd_blindspot(args) -> int:
+    home = ensure_home(home_of(args))
+    records = load_blindspots(home)
+
+    if args.action == "list":
+        shown = records
+        if args.status:
+            shown = [row for row in shown if row.get("status") == args.status]
+        if args.json:
+            print_json(shown)
+            return 0
+        if not shown:
+            print("blindspots: (none)")
+            return 0
+        for row in shown:
+            print("[%s] %s %s %s" % (
+                BLINDSPOT_STATUS_LABELS.get(row.get("status"), "已发现"),
+                row.get("id"), BLINDSPOT_KIND_LABELS.get(row.get("kind"), "概念"),
+                row.get("title", "")))
+        return 0
+
+    if args.action == "show":
+        write_blindspot_files(home, records)
+        shown = records[-args.limit:] if args.limit and args.limit > 0 else records
+        if args.json:
+            print_json(shown)
+            return 0
+        if not shown:
+            print("> 还没有记录知识盲区。")
+            return 0
+        groups = {}
+        for row in shown:
+            groups.setdefault(blindspot_file_path(home, row), []).append(row)
+        for path, rows in groups.items():
+            print("> %s" % path)
+            print(render_blindspot_file(rows).rstrip())
+            print()
+        return 0
+
+    if not require_consent(args, "blindspot"):
+        return 0
+
+    if args.action == "add":
+        title = (args.title or "").strip()
+        context = (args.context or "").strip()
+        kind = args.kind
+        if not title or not context or kind not in BLINDSPOT_KINDS:
+            raise SystemExit(
+                "blindspot add needs --title, --kind concept|principle|skill|method|boundary "
+                "and --context; if the granularity is unclear, ask the user")
+        for field, value in (("title", title), ("context", context)):
+            limit = BLINDSPOT_LIMITS[field]
+            if len(value) > limit:
+                raise SystemExit("blindspot --%s must be <= %d chars (got %d)" % (
+                    field, limit, len(value)))
+        state = load_state(home)
+        record = {
+            "id": _next_blindspot_id(records),
+            "date": today_str(),
+            "session": _resolve_session(state, args.session),
+            "title": title,
+            "kind": kind,
+            "context": context,
+            "status": "noticed",
+        }
+        if args.topic:
+            record["topic"] = args.topic.strip()
+        if args.node:
+            record["node"] = args.node.strip()
+        save_blindspots(home, records + [record])
+        write_blindspot_files(home, records + [record])
+        print("blindspot recorded: %s (%s)" % (record["id"], kind))
+        return 0
+
+    if args.action == "status":
+        if not args.id or args.status not in BLINDSPOT_STATUSES:
+            raise SystemExit("blindspot status needs --id and --status")
+        row = _find_blindspot(records, args.id)
+        if row is None:
+            raise SystemExit("blindspot not found: %s" % args.id)
+        if args.status in ("explained", "applied"):
+            raise SystemExit(
+                "use blindspot resolve to reach explained/applied "
+                "and link a progress record")
+        if args.status == "verified" and row.get("status") != "applied":
+            raise SystemExit(
+                "blindspot must be applied before verified; "
+                "use blindspot resolve --leap second first")
+        row["status"] = args.status
+        row["updated"] = today_str()
+        save_blindspots(home, records)
+        write_blindspot_files(home, records)
+        print("blindspot status: %s -> %s" % (row["id"], args.status))
+        return 0
+
+    if args.action == "resolve":
+        if not args.id or args.leap not in PROGRESS_LEAPS:
+            raise SystemExit("blindspot resolve needs --id and --leap first|second")
+        row = _find_blindspot(records, args.id)
+        if row is None:
+            raise SystemExit("blindspot not found: %s" % args.id)
+        progress = _add_progress_record(
+            home, context=args.context, summary=args.summary, leap=args.leap,
+            evidence=args.evidence or "", topic=args.topic or row.get("topic", ""),
+            node=args.node or row.get("node", ""), session=args.session,
+            blindspot=row["id"])
+        row["status"] = "explained" if args.leap == "first" else "applied"
+        row["progress_id"] = progress["id"]
+        row["updated"] = today_str()
+        save_blindspots(home, records)
+        write_blindspot_files(home, records)
+        print("blindspot resolved: %s -> %s (%s)" % (
+            row["id"], progress["id"], row["status"]))
+        return 0
+
+    if args.action == "drop":
+        if not args.id:
+            raise SystemExit("blindspot drop needs --id")
+        row = _find_blindspot(records, args.id)
+        if row is None:
+            raise SystemExit("blindspot not found: %s" % args.id)
+        remaining = [item for item in records if item.get("id") != args.id]
+        save_blindspots(home, remaining)
+        write_blindspot_files(home, remaining)
+        print("blindspot removed: %s" % args.id)
+        return 0
+
+    raise SystemExit("unknown blindspot action: %s" % args.action)
 
 
 def cmd_export(args) -> int:
@@ -1331,9 +1610,10 @@ def cmd_forget(args) -> int:
         actions.extend("delete %s" % path.name for path in targets)
         actions.append("drop delta rows for session %04d" % number)
         actions.append("drop progress rows for session %04d" % number)
+        actions.append("drop blindspots added in session %04d and clear dead links" % number)
     else:
         actions.append("delete all learner state, glossary, profile, notes")
-        actions.append("delete all sessions, deltas, progress, and the knowledge map")
+        actions.append("delete all sessions, deltas, progress, blindspots, and the knowledge map")
         actions.append("keep config.json")
 
     for action in actions:
@@ -1357,10 +1637,21 @@ def cmd_forget(args) -> int:
             encoding="utf-8", newline="\n")
         progress_rows = [row for row in load_progress(home)
                          if row.get("session") != "%04d" % number]
+        removed_progress_ids = {row.get("id") for row in load_progress(home)
+                                if row.get("session") == "%04d" % number}
         (home / "learner" / "progress.jsonl").write_text(
             "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in progress_rows),
             encoding="utf-8", newline="\n")
         write_progress_files(home, progress_rows)
+        blinds = [row for row in load_blindspots(home)
+                  if row.get("session") != "%04d" % number]
+        for row in blinds:
+            if row.get("progress_id") in removed_progress_ids:
+                row.pop("progress_id", None)
+                row["status"] = "noticed"
+                row["updated"] = today_str()
+        save_blindspots(home, blinds)
+        write_blindspot_files(home, blinds)
     else:
         for rel in ("learner", "sessions", "notes"):
             shutil.rmtree(home / rel, ignore_errors=True)
@@ -1570,6 +1861,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     add_consent(p)
     p.set_defaults(func=cmd_progress)
+
+    p = sub.add_parser("blindspot", help="record and review knowledge blind spots")
+    add_home(p)
+    p.add_argument("--action", required=True,
+                   choices=("add", "list", "show", "status", "resolve", "drop"))
+    p.add_argument("--id", default=None)
+    p.add_argument("--title", default=None)
+    p.add_argument("--kind", default=None, choices=BLINDSPOT_KINDS)
+    p.add_argument("--context", default=None,
+                   help="simple context of where the blind spot showed up (<=160 chars)")
+    p.add_argument("--status", default=None, choices=BLINDSPOT_STATUSES)
+    p.add_argument("--leap", default=None, choices=PROGRESS_LEAPS)
+    p.add_argument("--summary", default=None)
+    p.add_argument("--evidence", default=None)
+    p.add_argument("--topic", default=None)
+    p.add_argument("--node", default=None)
+    p.add_argument("--session", default="last")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--json", action="store_true")
+    add_consent(p)
+    p.set_defaults(func=cmd_blindspot)
 
     p = sub.add_parser("export", help="export learning data")
     add_home(p)

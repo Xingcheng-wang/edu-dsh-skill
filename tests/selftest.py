@@ -344,6 +344,89 @@ def main() -> int:
         check("state shows progress",
               "progress" in out and "（学习主线）进步记录.md" in out, out)
 
+        # blindspots: granularity, status machine, resolve -> progress link
+        code, out, _ = run(home, "blindspot", "--action", "add",
+                           "--title", "为什么极限不要求该点有定义",
+                           "--kind", "concept",
+                           "--context", "在导数定义那一步，他说不出为什么可以不管该点",
+                           "--topic", "calculus", "--session", "0001",
+                           "--consent", "outline")
+        check("blindspot add", code == 0 and "blindspot recorded" in out, out)
+        check("blindspot note named",
+              (home / "learner" / "微积分（主线）知识盲区.md").exists())
+        code, out, _ = run(home, "blindspot", "--action", "add",
+                           "--title", "什么时候不能用梯度下降",
+                           "--kind", "boundary",
+                           "--context", "他以为梯度下降任何函数都能用，遇到不可导点卡住",
+                           "--topic", "net", "--session", "0002",
+                           "--consent", "outline")
+        check("blindspot add second", code == 0 and "bs-0002" in out, out)
+        code, out, _ = run(home, "blindspot", "--action", "list")
+        check("blindspot list", "bs-0001" in out and "bs-0002" in out, out)
+        code, out, _ = run(home, "blindspot", "--action", "list", "--json")
+        blind_rows = json.loads(out)
+        check("blindspot json",
+              len(blind_rows) == 2 and blind_rows[0].get("kind") == "concept",
+              out[:200])
+        code, _, _ = run(home, "blindspot", "--action", "add",
+                         "--title", "x", "--kind", "unknown", "--context", "y",
+                         "--consent", "outline")
+        check("blindspot bad kind rejected", code != 0)
+        code, _, _ = run(home, "blindspot", "--action", "add",
+                         "--title", "x", "--kind", "concept", "--context", "y" * 161,
+                         "--consent", "outline")
+        check("blindspot context limit", code != 0)
+        code, out, _ = run(home, "blindspot", "--action", "add",
+                           "--title", "x", "--kind", "concept", "--context", "y",
+                           "--consent", "off")
+        check("blindspot off blocked", code == 0 and "not recorded" in out, out)
+        code, _, _ = run(home, "blindspot", "--action", "status", "--id", "bs-0001",
+                         "--status", "explained", "--consent", "outline")
+        check("blindspot explained needs resolve", code != 0)
+        code, _, _ = run(home, "blindspot", "--action", "status", "--id", "bs-0001",
+                         "--status", "verified", "--consent", "outline")
+        check("blindspot verified needs applied", code != 0)
+        code, out, _ = run(home, "blindspot", "--action", "resolve", "--id", "bs-0001",
+                           "--leap", "first",
+                           "--context", "他在白板上画了去心邻域，能说出极限只看附近",
+                           "--summary", "从背定义到能解释去心邻域的用处",
+                           "--session", "0001", "--consent", "outline")
+        check("blindspot resolve first",
+              code == 0 and "blindspot resolved" in out, out)
+        blind_rows = [json.loads(line) for line in
+                      (home / "learner" / "blindspots.jsonl").read_text(
+                          encoding="utf-8").splitlines() if line.strip()]
+        check("blindspot resolved status",
+              blind_rows[0].get("status") == "explained"
+              and blind_rows[0].get("progress_id", "").startswith("p-"),
+              blind_rows[0])
+        progress_rows = [json.loads(line) for line in
+                         (home / "learner" / "progress.jsonl").read_text(
+                             encoding="utf-8").splitlines() if line.strip()]
+        check("progress links blindspot",
+              any(row.get("blindspot") == "bs-0001" for row in progress_rows),
+              progress_rows[-1])
+        check("blindspot note links progress",
+              "关联进步：p-" in (home / "learner" / "微积分（主线）知识盲区.md").read_text(
+                  encoding="utf-8"))
+        code, out, _ = run(home, "blindspot", "--action", "resolve", "--id", "bs-0001",
+                           "--leap", "second",
+                           "--context", "他把去心邻域用在函数连续性的判断里，能指出反例",
+                           "--summary", "从能解释到能判断一个函数在该点有没有极限",
+                           "--session", "0001", "--consent", "outline")
+        check("blindspot resolve second", code == 0 and "(applied)" in out, out)
+        code, out, _ = run(home, "blindspot", "--action", "status", "--id", "bs-0001",
+                           "--status", "verified", "--consent", "outline")
+        check("blindspot verified", code == 0 and "verified" in out, out)
+        code, out, _ = run(home, "blindspot", "--action", "drop", "--id", "bs-0002",
+                           "--consent", "outline")
+        check("blindspot drop", code == 0 and "removed" in out, out)
+        check("blindspot dropped note removed",
+              not (home / "learner" / "net（主线）知识盲区.md").exists())
+        code, out, _ = run(home, "state")
+        check("state shows blindspots",
+              "blindspots" in out and "（主线）知识盲区.md" in out, out)
+
         archive = root / "backup.zip"
         code, out, _ = run(home, "export", "--to", str(archive))
         check("export exits 0", code == 0 and archive.exists(), out)
@@ -355,6 +438,10 @@ def main() -> int:
         check("export progress",
               "learner/progress.jsonl" in names
               and any(name.endswith("（学习主线）进步记录.md") for name in names),
+              str(names))
+        check("export blindspots",
+              "learner/blindspots.jsonl" in names
+              and any(name.endswith("（主线）知识盲区.md") for name in names),
               str(names))
 
         # forget: dry-run, then apply, then numbering must not be reused
@@ -375,6 +462,12 @@ def main() -> int:
               not (home / "learner" / "微积分（学习主线）进步记录.md").exists())
         check("forget kept other progress note",
               (home / "learner" / "net（学习主线）进步记录.md").exists())
+        remaining_blinds = [json.loads(line) for line in
+                            (home / "learner" / "blindspots.jsonl").read_text(
+                                encoding="utf-8").splitlines() if line.strip()]
+        check("forget removed blindspots", remaining_blinds == [], remaining_blinds)
+        check("forget removed blindspot note",
+              not (home / "learner" / "微积分（主线）知识盲区.md").exists())
 
         code, out, _ = run(home, "note", "--topic", "calculus/integral", "--summary", "下一轮",
                            "--consent", "outline")
@@ -409,6 +502,11 @@ def main() -> int:
               not list((home / "learner").glob("*（学习主线）进步记录.md")))
         check("forget all removed legacy progress md",
               not (home / "learner" / "progress.md").exists())
+        check("forget all reset blindspots",
+              (home / "learner" / "blindspots.jsonl").read_text(
+                  encoding="utf-8").strip() == "")
+        check("forget all removed blindspot notes",
+              not list((home / "learner").glob("*（主线）知识盲区.md")))
 
         # hand-written / legacy state must not crash (plain strings, int session ids)
         manual = root / "manual"

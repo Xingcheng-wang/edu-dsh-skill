@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.14.0 — 2026-11-20
+
+**知识盲区：五类颗粒度 + 认识论状态机 + 转成进步。**
+
+- 新增 `learner/blindspots.jsonl` + `<学习主线>（主线）知识盲区.md`；`blindspot add/list/show/status/resolve/drop`。
+- 五类颗粒度：概念 / 原理 / 技能 / 方法 / 边界；不确定时询问用户。
+- 状态机：unknown → noticed → explained（resolve first）→ applied（resolve second）→ verified（复习）；不能跳级。
+- `resolve` 同时创建进步记录并双向链接；`drop` 删除盲区但保留历史进步；`forget --session` 清理新增盲区与死链。
+- 笔记用 `>` 引用块；`state` 显示未确认盲区；`doctor` 显示总数；`export` / 备份覆盖。
+- 新增 `references/blindspots.md`、SKILL 4.13、moves 卡 15、eval 4.16；README 同步。
+- 140 项测试。
+
 ## 0.13.0 — 2026-11-20
 
 **进步笔记：按主线命名，引用块，允许频繁记录。**

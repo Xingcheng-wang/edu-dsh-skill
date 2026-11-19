@@ -3,9 +3,9 @@
 > 把对话变成“一位懂认知规律的老师教一个具体的人”。
 > 目标是让他**更会**，也**更想学**；两者冲突时，先保护想学。
 
-- 版本：0.13.0
+- 版本：0.14.0
 - 运行环境：Python 3.10+，仅标准库
-- 形态：Agent Skill（`SKILL.md` + 14 份参考 + 1 个本地 CLI + 冒烟测试）
+- 形态：Agent Skill（`SKILL.md` + 15 份参考 + 1 个本地 CLI + 冒烟测试）
 - 许可：MIT
 
 ---
@@ -214,6 +214,20 @@
 
 细节、例子和反模式见 [`references/progress.md`](references/progress.md)。
 
+### 4.12 知识盲区：记录、复习、转成进步
+
+盲区不是耻辱，是资产：记下来，定期复习；能解释、能应用、复习确认后，再转成进步记录。
+
+- **五类颗粒度**：概念（是什么）、原理（为什么）、技能（怎么做）、方法（流程）、边界（何时不成立）；不确定就问用户。
+- **状态机**：`unknown → noticed → explained → applied → verified`；可回退，不能跳级，`verified` 前必须 `applied`。
+- **笔记**：`learner/<学习主线>（主线）知识盲区.md`；一条一个 `>` 引用块。
+- **联动**：`resolve --leap first|second` 同时创建进步记录并双向链接；`drop` 删除盲区但保留历史进步。
+- **复习**：先让他自己说/做，失败回退 `noticed`；不把盲区数量当绩效。
+
+命令：`blindspot --action add|list|show|status|resolve|drop ... --consent outline`。
+
+细节、状态机图和例子见 [`references/blindspots.md`](references/blindspots.md)。
+
 ## 五、时代提示（克制）
 
 有些事现在还没发生，但值得他心里有数。只在相关时提一句，不展开成课。
@@ -237,7 +251,9 @@
 │   ├── glossary.md      # 已解释过的术语
 │   ├── map.json         # 知识地图：节点、先修边、当前位置
 │   ├── progress.jsonl   # 认知进步：上下文 + 两次飞跃 + 证据
-│   └── 微积分（学习主线）进步记录.md   # 生成的进步笔记（按主线命名）
+│   ├── 微积分（学习主线）进步记录.md   # 生成的进步笔记（按主线命名）
+│   ├── blindspots.jsonl # 知识盲区：颗粒度、状态、关联进步
+│   └── 微积分（主线）知识盲区.md       # 生成的盲区笔记（按主线命名）
 ├── map.md               # 人可读的知识地图（脚本生成）
 ├── notes/               # 长笔记、网页缓存
 ├── sessions/NNNN-YYYY-MM-DD-topic.md
@@ -272,6 +288,13 @@ edu_dsh.py delta --learned "..." --did "..." --want "..." \
 edu_dsh.py progress --action add --context "..." --leap first|second --summary "..." \
                     [--evidence "D:\\work\\demo\\retry.py:6"] [--topic ...] [--node ...]
 edu_dsh.py progress --action show [--limit 50] [--json]
+edu_dsh.py blindspot --action add --title "..." --kind concept|principle|skill|method|boundary \
+                      --context "..." [--topic ...] [--node ...] --consent outline
+edu_dsh.py blindspot --action list|show [--status ...] [--json]
+edu_dsh.py blindspot --action status --id bs-0001 --status noticed|unknown|verified --consent outline
+edu_dsh.py blindspot --action resolve --id bs-0001 --leap first|second \
+                      --context "..." --summary "..." --consent outline
+edu_dsh.py blindspot --action drop --id bs-0001 --consent outline
 
 # 所有权
 edu_dsh.py export --to ~/edu-backup.zip
@@ -322,7 +345,7 @@ python <skill-dir>/scripts/edu_dsh.py doctor
 红线一票否决：`local` 联网、编造来源、未经同意存原话、评分/排名/打卡、机械任务、把 AI 输出当验证、把地图当进度条、用“规定如此 / 考试要考”解释约定、用户说停还追问、传播 neuromyth。
 
 ```bash
-python tests/selftest.py     # 116 项：同意门槛、编号、备份、导出、地图、状态机、进步记录
+python tests/selftest.py     # 140 项：同意门槛、编号、备份、导出、地图、状态机、进步、盲区
 ```
 
 ## 十、文件
@@ -332,7 +355,7 @@ edu-dsh/
 ├── SKILL.md                 # 入口：目标、不变量、动作、地图、求知欲、自检
 ├── references/
 │   ├── learning.md          # 人怎么学 + 认知外包 + 信息缺口
-│   ├── moves.md             # 14 张动作卡
+│   ├── moves.md             # 15 张动作卡
 │   ├── practice-loop.md     # 入境→动手→看见→命名→再用
 │   ├── state.md             # 工作区、命令、同意、降级
 │   ├── examples.md          # 8 个好对话 + 5 个坏对话
@@ -343,6 +366,7 @@ edu-dsh/
 │   ├── code-explanation.md   # 逐行、绝对路径、不用模糊代词
 │   ├── terminology.md        # 术语/缩写/黑话：解释、确认、再默认使用
 │   ├── progress.md           # 认知进步：上下文、两次飞跃、字数限制
+│   ├── blindspots.md         # 知识盲区：五类颗粒度、状态机、转进步
 │   ├── future.md            # 6 张时代提示卡
 │   └── eval.md              # 用户侧评测协议
 ├── scripts/edu_dsh.py       # 记忆、地图、同意、导出、遗忘
@@ -366,6 +390,7 @@ edu-dsh/
 | 跟着跑题 / 拦着不让问 | 每轮状态行 + 一句话 + 主线书签 | 方向要稳，好奇不掐 |
 | 代码只讲大意 / 相对路径 / 指代不明 | 逐行 + 绝对路径 + 名字或行号 | 读者要能对上每一行 |
 | 默认用户懂缩写 / 黑话 | 先解释 + 确认 + 再默认用简称 | 解释不等于确认 |
+| 盲区记完就忘 | 五类颗粒度 + 状态机 + resolve 转进步 | 盲区是知识债，要复习、要转化 |
 | 进步只说“今天学了 X” | 上下文 + 两次飞跃 + 字数限制 | 具体到能复查，抽象到能迁移 |
 | 1961 行 CLI + BM25 索引 | 单文件 CLI，无索引 | 记忆要的是“记住这个人” |
 
