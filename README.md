@@ -3,9 +3,9 @@
 > 把对话变成“一位懂认知规律的老师教一个具体的人”。
 > 目标是让他**更会**，也**更想学**；两者冲突时，先保护想学。
 
-- 版本：0.11.0
+- 版本：0.12.0
 - 运行环境：Python 3.10+，仅标准库
-- 形态：Agent Skill（`SKILL.md` + 13 份参考 + 1 个本地 CLI + 冒烟测试）
+- 形态：Agent Skill（`SKILL.md` + 14 份参考 + 1 个本地 CLI + 冒烟测试）
 - 许可：MIT
 
 ---
@@ -198,6 +198,21 @@
 
 细节和正反例见 [`references/terminology.md`](references/terminology.md)。
 
+### 4.11 认知进步：具体上下文 + 两次飞跃 + 字数限制
+
+进步不是“今天学了 X”，是在某个具体场景里，认知发生了一次可指认的变化。
+
+- **上下文**（具体）：谁、在哪（文件/行/任务/回答）、发生了什么；**≤160 字**。
+- **概述**（抽象）：哪次飞跃 + 认知变化；**≤80 字**；不重复“第一次飞跃：/第二次飞跃：”。
+- **证据**（可选）：文件行、产物、测试结果、观察；**≤160 字**。
+- **两次飞跃**：第一次（感性→理性：提炼规律/边界）；第二次（理性→实践：改变真实做法/产物/决定）。
+- **显示**：记录后给一行 `进步｜第一次飞跃：<概述>`；`progress show` 看时间线；`state` 看最近一条。
+- **频率**：一次会话最多 1–2 条；不记例行、没有证据的“懂了”、重复；不显示进步条/百分比。
+
+命令：`progress --action add --context ... --leap first|second --summary ... --consent outline`。
+
+细节、例子和反模式见 [`references/progress.md`](references/progress.md)。
+
 ## 五、时代提示（克制）
 
 有些事现在还没发生，但值得他心里有数。只在相关时提一句，不展开成课。
@@ -219,7 +234,9 @@
 │   ├── profile.md       # 他是谁、想做什么、怎么学
 │   ├── state.json       # 目标、能做什么、卡在哪、下一个动作
 │   ├── glossary.md      # 已解释过的术语
-│   └── map.json         # 知识地图：节点、先修边、当前位置
+│   ├── map.json         # 知识地图：节点、先修边、当前位置
+│   ├── progress.jsonl   # 认知进步：上下文 + 两次飞跃 + 证据
+│   └── progress.md      # 生成的进步时间线
 ├── map.md               # 人可读的知识地图（脚本生成）
 ├── notes/               # 长笔记、网页缓存
 ├── sessions/NNNN-YYYY-MM-DD-topic.md
@@ -251,6 +268,9 @@ edu_dsh.py note  --topic calculus/limits --node limits --summary "..." --next ".
 edu_dsh.py delta --learned "..." --did "..." --want "..." \
                  [--alone "不看对话，自己把测试跑通了"] [--verified "pytest"] \
                  [--asked "为什么极限不要求该点有定义？"] [--returned "上次的连续问题"]
+edu_dsh.py progress --action add --context "..." --leap first|second --summary "..." \
+                    [--evidence "D:\\work\\demo\\retry.py:6"] [--topic ...] [--node ...]
+edu_dsh.py progress --action show [--limit 50] [--json]
 
 # 所有权
 edu_dsh.py export --to ~/edu-backup.zip
@@ -301,7 +321,7 @@ python <skill-dir>/scripts/edu_dsh.py doctor
 红线一票否决：`local` 联网、编造来源、未经同意存原话、评分/排名/打卡、机械任务、把 AI 输出当验证、把地图当进度条、用“规定如此 / 考试要考”解释约定、用户说停还追问、传播 neuromyth。
 
 ```bash
-python tests/selftest.py     # 93 项：同意门槛、编号、备份、导出、地图、状态机、好奇心字段
+python tests/selftest.py     # 111 项：同意门槛、编号、备份、导出、地图、状态机、进步记录
 ```
 
 ## 十、文件
@@ -311,7 +331,7 @@ edu-dsh/
 ├── SKILL.md                 # 入口：目标、不变量、动作、地图、求知欲、自检
 ├── references/
 │   ├── learning.md          # 人怎么学 + 认知外包 + 信息缺口
-│   ├── moves.md             # 13 张动作卡
+│   ├── moves.md             # 14 张动作卡
 │   ├── practice-loop.md     # 入境→动手→看见→命名→再用
 │   ├── state.md             # 工作区、命令、同意、降级
 │   ├── examples.md          # 8 个好对话 + 5 个坏对话
@@ -321,6 +341,7 @@ edu-dsh/
 │   ├── genesis.md           # 五步还原、历史纪律、批判与创新
 │   ├── code-explanation.md   # 逐行、绝对路径、不用模糊代词
 │   ├── terminology.md        # 术语/缩写/黑话：解释、确认、再默认使用
+│   ├── progress.md           # 认知进步：上下文、两次飞跃、字数限制
 │   ├── future.md            # 6 张时代提示卡
 │   └── eval.md              # 用户侧评测协议
 ├── scripts/edu_dsh.py       # 记忆、地图、同意、导出、遗忘
@@ -344,6 +365,7 @@ edu-dsh/
 | 跟着跑题 / 拦着不让问 | 每轮状态行 + 一句话 + 主线书签 | 方向要稳，好奇不掐 |
 | 代码只讲大意 / 相对路径 / 指代不明 | 逐行 + 绝对路径 + 名字或行号 | 读者要能对上每一行 |
 | 默认用户懂缩写 / 黑话 | 先解释 + 确认 + 再默认用简称 | 解释不等于确认 |
+| 进步只说“今天学了 X” | 上下文 + 两次飞跃 + 字数限制 | 具体到能复查，抽象到能迁移 |
 | 1961 行 CLI + BM25 索引 | 单文件 CLI，无索引 | 记忆要的是“记住这个人” |
 
 ## 十二、限制

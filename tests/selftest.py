@@ -288,6 +288,53 @@ def main() -> int:
         code, out, _ = run(home, "state")
         check("state shows asked", "问:" in out and "回:" in out, out)
 
+        # progress: concrete context + abstract summary, both leaps, word limits
+        code, out, _ = run(home, "progress", "--action", "add",
+                           "--context", "在 retry.py 第 6 行，他先猜异常会被吞掉，跑了一次发现异常真的没了",
+                           "--leap", "first",
+                           "--summary", "第一次飞跃：从猜行为到能说出 try/except 的边界",
+                           "--evidence", "D:\\work\\demo\\retry.py:6",
+                           "--session", "0001", "--consent", "outline")
+        check("progress add first", code == 0 and "progress recorded" in out, out)
+        check("progress jsonl created", (home / "learner" / "progress.jsonl").exists())
+        code, out, _ = run(home, "progress", "--action", "add",
+                           "--context", "他把异常处理改到真实上传脚本，先加幂等键再重试，避免重复扣款",
+                           "--leap", "second",
+                           "--summary", "从会解释重试边界到能把它用进真实上传动作",
+                           "--session", "0002", "--consent", "outline")
+        check("progress add second", code == 0 and "p-0002" in out, out)
+        code, out, _ = run(home, "progress", "--action", "show")
+        check("progress show both leaps",
+              "第一次飞跃" in out and "第二次飞跃" in out, out)
+        check("progress show context", "retry.py 第 6 行" in out, out)
+        check("progress summary normalized",
+              "第一次飞跃：第一次飞跃" not in out, out)
+        code, out, _ = run(home, "progress", "--action", "show", "--json")
+        progress_rows = json.loads(out)
+        check("progress json",
+              len(progress_rows) == 2 and progress_rows[0].get("leap") == "first",
+              out[:200])
+        check("progress summary stripped",
+              progress_rows[0].get("summary") == "从猜行为到能说出 try/except 的边界",
+              progress_rows[0])
+        code, out, _ = run(home, "progress", "--action", "add",
+                           "--context", "x", "--leap", "first", "--summary", "y",
+                           "--consent", "off")
+        check("progress off blocked", code == 0 and "not recorded" in out, out)
+        code, _, _ = run(home, "progress", "--action", "add",
+                         "--context", "x" * 161, "--leap", "first",
+                         "--summary", "y", "--consent", "outline")
+        check("progress context limit", code != 0)
+        code, _, _ = run(home, "progress", "--action", "add",
+                         "--context", "x", "--leap", "first",
+                         "--summary", "y" * 81, "--consent", "outline")
+        check("progress summary limit", code != 0)
+        code, _, _ = run(home, "progress", "--action", "add",
+                         "--context", "x", "--summary", "y", "--consent", "outline")
+        check("progress needs leap", code != 0)
+        code, out, _ = run(home, "state")
+        check("state shows progress", "progress" in out and "第二次飞跃" in out, out)
+
         archive = root / "backup.zip"
         code, out, _ = run(home, "export", "--to", str(archive))
         check("export exits 0", code == 0 and archive.exists(), out)
@@ -296,6 +343,9 @@ def main() -> int:
         check("export contents", "config.json" in names and "learner/state.json" in names
               and any(name.startswith("sessions/") for name in names), str(names))
         check("export map", "learner/map.json" in names and "map.md" in names, str(names))
+        check("export progress",
+              "learner/progress.jsonl" in names and "learner/progress.md" in names,
+              str(names))
 
         # forget: dry-run, then apply, then numbering must not be reused
         code, out, _ = run(home, "forget", "--session", "0001")
@@ -306,6 +356,13 @@ def main() -> int:
         check("forget apply", code == 0 and "done." in out, out)
         check("forget removed session", not list((home / "sessions").glob("0001-*.md")))
         check("forget made backup", any((home / "backup").iterdir()))
+        remaining = [json.loads(line) for line in
+                     (home / "learner" / "progress.jsonl").read_text(encoding="utf-8").splitlines()
+                     if line.strip()]
+        check("forget removed progress rows",
+              len(remaining) == 1 and remaining[0].get("leap") == "second", remaining)
+        check("forget rewrote progress md",
+              "retry.py" not in (home / "learner" / "progress.md").read_text(encoding="utf-8"))
 
         code, out, _ = run(home, "note", "--topic", "calculus/integral", "--summary", "下一轮",
                            "--consent", "outline")
@@ -334,6 +391,10 @@ def main() -> int:
         check("forget all removed map.md", not (home / "map.md").exists())
         maps = json.loads((home / "learner" / "map.json").read_text(encoding="utf-8"))
         check("forget all reset map", maps["maps"] == [])
+        check("forget all reset progress",
+              (home / "learner" / "progress.jsonl").read_text(encoding="utf-8").strip() == "")
+        check("forget all removed progress md",
+              not (home / "learner" / "progress.md").exists())
 
         # hand-written / legacy state must not crash (plain strings, int session ids)
         manual = root / "manual"

@@ -20,7 +20,7 @@ import zipfile
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.11.0"
+VERSION = "0.12.0"
 MIN_PYTHON = (3, 10)
 
 CONSENT_LEVELS = ("off", "outline", "verbatim")
@@ -32,6 +32,12 @@ MAP_KINDS = ("concept", "skill", "method", "problem")
 MAP_ROLES = ("trunk", "branch")
 MAP_RELATIONS = ("prereq", "part-of", "contrast")
 MAP_MODES = ("mainline", "branch", "review")
+PROGRESS_LEAPS = ("first", "second")
+PROGRESS_LIMITS = {"context": 160, "summary": 80, "evidence": 160}
+PROGRESS_LABELS = {
+    "first": "第一次飞跃（感性 → 理性）",
+    "second": "第二次飞跃（理性 → 实践）",
+}
 MAP_MARKS = {"can-do": "[x]", "practicing": "[~]", "touched": "[.]", "unseen": "[ ]"}
 
 DEFAULT_CONFIG = {
@@ -191,6 +197,10 @@ def ensure_home(home: Path, lang: str = "auto") -> Path:
     if not deltas.exists():
         deltas.write_text("", encoding="utf-8")
 
+    progress = home / "learner" / "progress.jsonl"
+    if not progress.exists():
+        progress.write_text("", encoding="utf-8")
+
     return home
 
 
@@ -272,6 +282,85 @@ def _read_deltas(home: Path, limit: int | None = None) -> list:
         row["session"] = _session_label(row.get("session"))
         rows.append(row)
     return rows[-limit:] if limit else rows
+
+
+# ------------------------------------------------------------------ progress
+
+
+def load_progress(home: Path, limit: int | None = None) -> list:
+    path = home / "learner" / "progress.jsonl"
+    if not path.exists():
+        return []
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        row.setdefault("date", "")
+        row["session"] = _session_label(row.get("session"))
+        if row.get("leap") not in PROGRESS_LEAPS:
+            row["leap"] = "first"
+        rows.append(row)
+    return rows[-limit:] if limit else rows
+
+
+def _next_progress_id(rows: list) -> str:
+    highest = 0
+    for row in rows:
+        match = re.match(r"p-(\d+)", str(row.get("id", "")))
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return "p-%04d" % (highest + 1)
+
+
+def render_progress_text(records: list) -> str:
+    lines = [
+        "# 认知进步",
+        "",
+        "> 每条：具体上下文 + 抽象概述（两次飞跃之一）+ 证据。",
+        "> 字数：上下文 ≤160，概述 ≤80，证据 ≤160。",
+        "",
+    ]
+    if not records:
+        lines += ["还没有记录。一次真正的进步，至少要有具体上下文和一句抽象概述。", ""]
+        return "\n".join(lines)
+
+    for leap in PROGRESS_LEAPS:
+        group = [row for row in records if row.get("leap") == leap]
+        if not group:
+            continue
+        lines += ["## %s" % PROGRESS_LABELS[leap], ""]
+        for row in group:
+            where = "session %s" % (row.get("session") or "?")
+            if row.get("topic") or row.get("node"):
+                where += " · " + "/".join(
+                    part for part in (row.get("topic"), row.get("node")) if part)
+            lines.append("### %s · %s" % (row.get("date") or "", where))
+            lines.append("- **上下文**：%s" % (row.get("context") or ""))
+            lines.append("- **概述**：%s" % (row.get("summary") or ""))
+            if row.get("evidence"):
+                lines.append("- **证据**：%s" % row["evidence"])
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_progress_file(home: Path, records: list) -> str:
+    text = render_progress_text(records)
+    (home / "learner" / "progress.md").write_text(
+        text, encoding="utf-8", newline="\n")
+    return text
+
+
+def _resolve_session(state: dict, value) -> str:
+    if not value or value in ("last", "latest"):
+        return "%04d" % int(state.get("session_counter", 0))
+    return _session_label(value)
 
 
 # ------------------------------------------------------------------ knowledge map
@@ -704,6 +793,7 @@ def cmd_doctor(args) -> int:
     maps = load_maps(home).get("maps") or []
     print("maps     : %d map(s), %d node(s)" % (
         len(maps), sum(len(m.get("nodes") or []) for m in maps)))
+    print("progress : %d record(s)" % len(load_progress(home)))
     return 0
 
 
@@ -721,6 +811,7 @@ def cmd_state(args) -> int:
             "maps": load_maps(home).get("maps") or [],
             "sessions": [p.name for p in sessions[-10:]],
             "recent_deltas": _read_deltas(home, 5),
+            "progress": load_progress(home)[-5:],
         })
         return 0
 
@@ -796,6 +887,16 @@ def cmd_state(args) -> int:
             print("              问: %s" % last["asked"])
         if last.get("returned"):
             print("              回: %s" % last["returned"])
+
+    progress = load_progress(home)
+    if progress:
+        last_progress = progress[-1]
+        label = "第一次飞跃" if last_progress.get("leap") == "first" else "第二次飞跃"
+        print("progress    : %s · %s（%s）" % (
+            label, last_progress.get("summary", ""), last_progress.get("date", "")))
+        print("              file: %s" % (home / "learner" / "progress.md"))
+    else:
+        print("progress    : (nothing recorded yet)")
     return 0
 
 
@@ -1086,6 +1187,68 @@ def cmd_delta(args) -> int:
     return 0
 
 
+def cmd_progress(args) -> int:
+    home = ensure_home(home_of(args))
+    records = load_progress(home)
+
+    if args.action == "show":
+        shown = records[-args.limit:] if args.limit and args.limit > 0 else records
+        write_progress_file(home, records)
+        if args.json:
+            print_json(shown)
+        else:
+            print(render_progress_text(shown).rstrip())
+        return 0
+
+    if not require_consent(args, "progress"):
+        return 0
+
+    context = (args.context or "").strip()
+    summary = (args.summary or "").strip()
+    for prefix in ("第一次飞跃：", "第一次飞跃:", "第二次飞跃：", "第二次飞跃:"):
+        if summary.startswith(prefix):
+            summary = summary[len(prefix):].strip()
+            break
+    leap = args.leap
+    if not context or not summary or leap not in PROGRESS_LEAPS:
+        raise SystemExit(
+            "progress add needs --context, --summary and --leap first|second")
+
+    for field, value in (("context", context), ("summary", summary)):
+        limit = PROGRESS_LIMITS[field]
+        if len(value) > limit:
+            raise SystemExit("progress --%s must be <= %d chars (got %d)" % (
+                field, limit, len(value)))
+
+    evidence = (args.evidence or "").strip()
+    if len(evidence) > PROGRESS_LIMITS["evidence"]:
+        raise SystemExit("progress --evidence must be <= %d chars (got %d)" % (
+            PROGRESS_LIMITS["evidence"], len(evidence)))
+
+    state = load_state(home)
+    record = {
+        "id": _next_progress_id(records),
+        "date": today_str(),
+        "session": _resolve_session(state, args.session),
+        "leap": leap,
+        "context": context,
+        "summary": summary,
+    }
+    if args.topic:
+        record["topic"] = args.topic.strip()
+    if args.node:
+        record["node"] = args.node.strip()
+    if evidence:
+        record["evidence"] = evidence
+
+    with (home / "learner" / "progress.jsonl").open(
+            "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    write_progress_file(home, records + [record])
+    print("progress recorded: %s (%s)" % (record["id"], leap))
+    return 0
+
+
 def cmd_export(args) -> int:
     home = ensure_home(home_of(args))
     target = Path(args.to).expanduser()
@@ -1138,9 +1301,10 @@ def cmd_forget(args) -> int:
             raise SystemExit("session %04d not found" % number)
         actions.extend("delete %s" % path.name for path in targets)
         actions.append("drop delta rows for session %04d" % number)
+        actions.append("drop progress rows for session %04d" % number)
     else:
         actions.append("delete all learner state, glossary, profile, notes")
-        actions.append("delete all sessions, deltas, and the knowledge map")
+        actions.append("delete all sessions, deltas, progress, and the knowledge map")
         actions.append("keep config.json")
 
     for action in actions:
@@ -1162,6 +1326,12 @@ def cmd_forget(args) -> int:
         (home / "deltas.jsonl").write_text(
             "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
             encoding="utf-8", newline="\n")
+        progress_rows = [row for row in load_progress(home)
+                         if row.get("session") != "%04d" % number]
+        (home / "learner" / "progress.jsonl").write_text(
+            "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in progress_rows),
+            encoding="utf-8", newline="\n")
+        write_progress_file(home, progress_rows)
     else:
         for rel in ("learner", "sessions", "notes"):
             shutil.rmtree(home / rel, ignore_errors=True)
@@ -1353,6 +1523,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--evidence", action="append", default=[])
     add_consent(p, required=True)
     p.set_defaults(func=cmd_delta)
+
+    p = sub.add_parser("progress", help="record and show cognitive progress")
+    add_home(p)
+    p.add_argument("--action", required=True, choices=("add", "show"))
+    p.add_argument("--context", default=None,
+                   help="concrete scene: what happened, where, what changed (<=160 chars)")
+    p.add_argument("--summary", default=None,
+                   help="abstract summary: which leap and what changed (<=80 chars)")
+    p.add_argument("--leap", default=None, choices=PROGRESS_LEAPS)
+    p.add_argument("--evidence", default=None,
+                   help="file line, artifact or observation (<=160 chars)")
+    p.add_argument("--topic", default=None)
+    p.add_argument("--node", default=None)
+    p.add_argument("--session", default="last")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--json", action="store_true")
+    add_consent(p)
+    p.set_defaults(func=cmd_progress)
 
     p = sub.add_parser("export", help="export learning data")
     add_home(p)
